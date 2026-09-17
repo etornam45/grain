@@ -9,11 +9,18 @@ import (
 )
 
 func Generate(dir, name string, prompt PromptFunc) (string, error) {
+	return generate(BuildSnapshot(), dir, name, prompt)
+}
+
+func GenerateFromSnapshot(newSnap Snapshot, dir, name string, prompt PromptFunc) (string, error) {
+	return generate(newSnap, dir, name, prompt)
+}
+
+func generate(newSnap Snapshot, dir, name string, prompt PromptFunc) (string, error) {
 	old, err := LoadLatestSnapshot(dir)
 	if err != nil {
 		return "", fmt.Errorf("load latest snapshot: %w", err)
 	}
-	newSnap := BuildSnapshot()
 
 	changes, err := Diff(old, newSnap, prompt)
 	if err != nil {
