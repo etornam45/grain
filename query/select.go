@@ -8,9 +8,11 @@ import (
 	"strings"
 )
 
+type OrderDir string
+
 const (
-	Asc  = "ASC"
-	Desc = "DESC"
+	Asc  OrderDir = "ASC"
+	Desc OrderDir = "DESC"
 )
 
 type namedTable interface {
@@ -33,6 +35,11 @@ type joinClause struct {
 	on    Condition
 }
 
+type OrderBy struct {
+	cols []string
+	dir  OrderDir
+}
+
 type SelectBuilder[T any] struct {
 	columns  []string
 	distinct bool
@@ -41,8 +48,7 @@ type SelectBuilder[T any] struct {
 	where    Condition
 	groupBy  []string
 	having   Condition
-	orderCol string
-	orderDir string
+	orderBy  []OrderBy
 	limitN   *int
 	offsetN  *int
 }
@@ -88,13 +94,8 @@ func (q *SelectBuilder[T]) Where(c Condition) *SelectBuilder[T]      { q.where =
 func (q *SelectBuilder[T]) GroupBy(cols ...string) *SelectBuilder[T] { q.groupBy = cols; return q }
 func (q *SelectBuilder[T]) Having(c Condition) *SelectBuilder[T]     { q.having = c; return q }
 
-// OrderBy takes a plain "table.column" string (rather than colRef) since a
-// generic SelectBuilder[T] can be built before both joined tables' Cols are
-// necessarily in scope in the same expression; pass col.String() if you have
-// a *schema.ColumnDef handy.
-// TODO: Add multiple orderBy later 
-func (q *SelectBuilder[T]) OrderBy(col string, dir string) *SelectBuilder[T] {
-	q.orderCol, q.orderDir = col, dir
+func (q *SelectBuilder[T]) OrderBy(cols []string, dir OrderDir) *SelectBuilder[T] {
+	q.orderBy = append(q.orderBy, OrderBy{dir: dir, cols: cols})
 	return q
 }
 
@@ -144,9 +145,13 @@ func (q *SelectBuilder[T]) SQL() (string, []any) {
 		b.WriteString(havingSQL)
 		args = append(args, havingArgs...)
 	}
-	// TODO: Add support for multiple cols and dir pairs
-	if q.orderCol != "" {
-		fmt.Fprintf(&b, " ORDER BY %s %s", q.orderCol, q.orderDir)
+	
+	if len(q.orderBy) > 0 {
+		b.WriteString(" ORDER BY ")
+		for _, o := range q.orderBy {
+			b.WriteString(strings.Join(o.cols, ", "))
+			b.WriteString(string(o.dir))
+		}
 	}
 	if q.limitN != nil {
 		fmt.Fprintf(&b, " LIMIT %d", *q.limitN)

@@ -50,7 +50,7 @@ func main() {
 	users, err := query.Select[User](schema.Users.Cols.ID, schema.Users.Cols.Name, schema.Users.Cols.Email, schema.Users.Cols.Status).
 		From(schema.Users).
 		Where(query.Eq(schema.Users.Cols.Status, "active")).
-		OrderBy(schema.Users.Cols.Name.String(), query.Asc).
+		OrderBy([]string {schema.Users.Cols.Name.Str()}, query.Asc).
 		Limit(10).
 		All(ctx, conn)
 	if err != nil {

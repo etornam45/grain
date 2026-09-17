@@ -35,3 +35,8 @@ func (c *ColumnDef) String() string {
 	}
 	return c.Table + "." + c.Name
 }
+
+
+func (c *ColumnDef) Str() string {
+	return c.String()
+}
