@@ -3,8 +3,8 @@ package query
 import (
 	"context"
 	"fmt"
-	"grainorm/grain/db"
-	"grainorm/grain/scan"
+	"grain/db"
+	"grain/scan"
 	"strings"
 )
 

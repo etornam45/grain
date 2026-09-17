@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"grainorm/grain/schema"
+	"grain/schema"
 )
 
 type ColumnSnapshot struct {
