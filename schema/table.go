@@ -12,6 +12,8 @@ type tableCore struct {
 	columns    []*ColumnDef
 }
 
+// TODO: Add support for indexing
+
 func (t *tableCore) Col(name string) *ColumnDef {
 	c, ok := t.colsByName[name]
 	if !ok {
@@ -23,12 +25,10 @@ func (t *tableCore) Col(name string) *ColumnDef {
 func (t *tableCore) Columns() []*ColumnDef { return t.columns }
 func (t *tableCore) TableName() string     { return t.Name }
 
-
 type TableDef[T any] struct {
 	tableCore
 	Cols T
 }
-
 
 func Table[T any](name string, columns ...*ColumnDef) *TableDef[T] {
 	t := &TableDef[T]{

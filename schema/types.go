@@ -28,8 +28,12 @@ func Numeric(precision, scale int) *ColumnType {
 	return &ColumnType{SQLType: fmt.Sprintf("NUMERIC(%d,%d)", precision, scale)}
 }
 
+var EnumRegistry = map[string]*ColumnType{}
+
 func Enum(name string, values ...string) *ColumnType {
-	return &ColumnType{SQLType: name, IsEnum: true, EnumName: name, EnumValues: values}
+	ct := &ColumnType{SQLType: name, IsEnum: true, EnumName: name, EnumValues: values}
+	EnumRegistry[name] = ct
+	return ct
 }
 
 type ReferentialAction string
