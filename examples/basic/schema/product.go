@@ -3,7 +3,7 @@ package schema
 import "grain/schema"
 
 type ProductColums struct {
-	Id, Name, Price, Sku *schema.ColumnDef
+	Id, Name, Price, Sku, Barcode *schema.ColumnDef
 }
 
 var Product = schema.Table[ProductColums]("product",
