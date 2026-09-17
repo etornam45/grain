@@ -118,6 +118,11 @@ func diffTables(old, new Snapshot, prompt PromptFunc) ([]Change, error) {
 
 	for _, t := range topoSortByFK(newTables, unmatchedNew) {
 		changes = append(changes, createTableChange(t))
+		idxChanges, err := diffIndexes(t.Name, TableSnapshot{}, t)
+		if err != nil {
+			return nil, err
+		}
+		changes = append(changes, idxChanges...)
 	}
 
 	return changes, nil
