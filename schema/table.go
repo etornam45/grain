@@ -14,7 +14,6 @@ type tableCore struct {
 	indices    []IndexDef
 }
 
-// TODO: Add support for indexing
 
 func (t *tableCore) Col(name string) *ColumnDef {
 	c, ok := t.colsByName[name]
