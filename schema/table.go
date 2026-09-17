@@ -46,6 +46,12 @@ func Table[T any](name string, columns ...*ColumnDef) *TableDef[T] {
 		c.Table = name
 		t.colsByName[c.Name] = c
 		t.columns = append(t.columns, c)
+		if c.HasIndex {
+			t.indices = append(t.indices, IndexDef{
+				Name: fmt.Sprintf("idx_%s_%s", name, c.Name),
+				Cols: []string{c.Name},
+			})
+		}
 	}
 	t.Cols = Bind[T](&t.tableCore)
 	Registry = append(Registry, &t.tableCore)
