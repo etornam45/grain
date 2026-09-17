@@ -1,0 +1,16 @@
+package schema
+
+
+import "grain/schema"
+
+
+type ProductColums struct {
+	Id, Name, Price, Sku *schema.ColumnDef
+}
+
+var Product = schema.Table[ProductColums]("product", 
+	schema.Column("id", schema.UUID()).PrimaryKey().NotNull(),
+	schema.Column("name", schema.Varchar(225)).NotNull(),
+	schema.Column("price", schema.Numeric(10, 2)).NotNull(),
+	schema.Column("sku", schema.Varchar(15)).NotNull().Unique(),
+)
