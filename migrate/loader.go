@@ -62,9 +62,6 @@ func main() {
 		return Snapshot{}, fmt.Errorf("parse loader output: %w", err)
 	}
 
-	// if _, err := os.ReadDir(tmpDir); err != nil {
-	// 	println("Warn: error removing %s", tmpDir)
-	// }
 	return snap, nil
 }
 
