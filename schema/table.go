@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"unicode"
 )
 
 type tableCore struct {
@@ -69,14 +70,25 @@ func Bind[T any](t *tableCore) T {
 }
 
 func toSnakeCase(s string) string {
+	runes := []rune(s)
+	n := len(runes)
 	var b strings.Builder
-	for i, r := range s {
-		if i > 0 && r >= 'A' && r <= 'Z' {
-			b.WriteByte('_')
+ 
+	for i, r := range runes {
+		if unicode.IsUpper(r) {
+			if i > 0 {
+				prev := runes[i-1]
+				nextIsLower := i+1 < n && unicode.IsLower(runes[i+1])
+				if unicode.IsLower(prev) || unicode.IsDigit(prev) || nextIsLower {
+					b.WriteByte('_')
+				}
+			}
+			b.WriteRune(unicode.ToLower(r))
+		} else {
+			b.WriteRune(r)
 		}
-		b.WriteRune(r)
 	}
-	return strings.ToLower(b.String())
+	return b.String()
 }
 
 var Registry []*tableCore
