@@ -12,6 +12,8 @@ const (
 	AlterColumnType ChangeKind = "alter_column_type"
 	CreateEnum      ChangeKind = "create_enum"
 	AddEnumValue    ChangeKind = "add_enum_value"
+	AddIndex        ChangeKind = "add_index"
+	DropIndex       ChangeKind = "drop_index"
 )
 
 type Change struct {

@@ -78,23 +78,15 @@ func diffTables(old, new Snapshot, prompt PromptFunc) ([]Change, error) {
 		matchedOld[name] = true
 		matchedNew[name] = true
 		colChanges, err := diffColumns(name, oldT, newT, prompt)
-		if err != nil {
+		idxChanges, err2 := diffIndexes(name, oldT, newT)
+		if err != nil || err2 != nil {
 			return nil, err
 		}
 		changes = append(changes, colChanges...)
+		changes = append(changes, idxChanges...)
 	}
 
-	var unmatchedOld, unmatchedNew []string
-	for name := range oldTables {
-		if !matchedOld[name] {
-			unmatchedOld = append(unmatchedOld, name)
-		}
-	}
-	for name := range newTables {
-		if !matchedNew[name] {
-			unmatchedNew = append(unmatchedNew, name)
-		}
-	}
+	unmatchedOld, unmatchedNew := findUnmatched(oldTables, newTables)
 
 	for _, oldName := range unmatchedOld {
 		res, err := prompt(PromptContext{Kind: AmbiguousTable, OldName: oldName, Candidates: unmatchedNew})
@@ -126,6 +118,11 @@ func diffTables(old, new Snapshot, prompt PromptFunc) ([]Change, error) {
 
 	for _, t := range topoSortByFK(newTables, unmatchedNew) {
 		changes = append(changes, createTableChange(t))
+		idxChanges, err := diffIndexes(t.Name, TableSnapshot{}, t)
+		if err != nil {
+			return nil, err
+		}
+		changes = append(changes, idxChanges...)
 	}
 
 	return changes, nil
@@ -214,6 +211,65 @@ func diffColumns(table string, oldT, newT TableSnapshot, prompt PromptFunc) ([]C
 	}
 
 	return changes, nil
+}
+
+func diffIndexes(table string, oldT, newT TableSnapshot) ([]Change, error) {
+	oldIdx := map[string]IndexSnapshort{}
+	for _, i := range oldT.Indexes {
+		oldIdx[i.Name] = i
+	}
+	newIdx := map[string]IndexSnapshort{}
+	for _, i := range newT.Indexes {
+		newIdx[i.Name] = i
+	}
+
+	var changes []Change
+	unmatchedOld, unmatchedNew := findUnmatched(oldIdx, newIdx)
+
+	for _, oldName := range unmatchedOld {
+		changes = append(changes, Change{
+			Kind:    DropIndex,
+			UpSQL:   fmt.Sprintf("DROP INDEX CONCURRENTLY IF EXISTS %s;", oldName),
+			DownSQL: fmt.Sprintf("CREATE INDEX CONCURRENTLY %s ON %s (%s);", oldName, table, strings.Join(oldIdx[oldName].Cols, ", ")),
+		})
+	}
+
+	for _, newName := range unmatchedNew {
+		changes = append(changes, Change{
+			Kind:    AddIndex,
+			UpSQL:   fmt.Sprintf("CREATE INDEX CONCURRENTLY %s ON %s (%s);", newName, table, strings.Join(newIdx[newName].Cols, ", ")),
+			DownSQL: fmt.Sprintf("DROP INDEX CONCURRENTLY IF EXISTS %s;", newName),
+		})
+	}
+
+	return changes, nil
+}
+
+func findUnmatched[T any](old, new map[string]T) ([]string, []string) {
+	matchedOld := map[string]bool{}
+	matchedNew := map[string]bool{}
+	for name, _ := range new {
+		_, ok := old[name]
+		if !ok {
+			continue
+		}
+
+		matchedOld[name] = true
+		matchedNew[name] = true
+	}
+
+	var unmatchedOld, unmatchedNew []string
+	for name := range old {
+		if !matchedOld[name] {
+			unmatchedOld = append(unmatchedOld, name)
+		}
+	}
+	for name := range new {
+		if !matchedNew[name] {
+			unmatchedNew = append(unmatchedNew, name)
+		}
+	}
+	return unmatchedOld, unmatchedNew
 }
 
 // FIXME: It doesn't detect cycles — a circular FK between two brand-new tables still

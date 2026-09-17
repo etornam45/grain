@@ -11,9 +11,9 @@ type tableCore struct {
 	Name       string
 	colsByName map[string]*ColumnDef
 	columns    []*ColumnDef
+	indices    []IndexDef
 }
 
-// TODO: Add support for indexing
 
 func (t *tableCore) Col(name string) *ColumnDef {
 	c, ok := t.colsByName[name]
@@ -23,8 +23,14 @@ func (t *tableCore) Col(name string) *ColumnDef {
 	return c
 }
 
-func (t *tableCore) Columns() []*ColumnDef { return t.columns }
-func (t *tableCore) TableName() string     { return t.Name }
+func (t *tableCore) Columns() []*ColumnDef  { return t.columns }
+func (t *tableCore) GetIndices() []IndexDef { return t.indices }
+func (t *tableCore) TableName() string      { return t.Name }
+
+type IndexDef struct {
+	Name string
+	Cols []string
+}
 
 type TableDef[T any] struct {
 	tableCore
@@ -39,6 +45,12 @@ func Table[T any](name string, columns ...*ColumnDef) *TableDef[T] {
 		c.Table = name
 		t.colsByName[c.Name] = c
 		t.columns = append(t.columns, c)
+		if c.HasIndex {
+			t.indices = append(t.indices, IndexDef{
+				Name: fmt.Sprintf("idx_%s_%s", name, c.Name),
+				Cols: []string{c.Name},
+			})
+		}
 	}
 	t.Cols = Bind[T](&t.tableCore)
 	Registry = append(Registry, &t.tableCore)
@@ -73,7 +85,7 @@ func toSnakeCase(s string) string {
 	runes := []rune(s)
 	n := len(runes)
 	var b strings.Builder
- 
+
 	for i, r := range runes {
 		if unicode.IsUpper(r) {
 			if i > 0 {
@@ -90,5 +102,13 @@ func toSnakeCase(s string) string {
 	}
 	return b.String()
 }
+
+func (t *TableDef[T]) Index(name string, cols ...string) *TableDef[T] {
+	t.indices = append(t.indices, IndexDef{Name: name, Cols: cols})
+	return t
+}
+
+// func (t *TableDef[T]) Unique(name string, cols ...string) *TableDef[T]
+// func (t *TableDef[T]) Constraint(name, expr string) *TableDef[T]
 
 var Registry []*tableCore
