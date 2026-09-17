@@ -25,9 +25,15 @@ type ColumnSnapshot struct {
 	OnUpdate    string `json:"on_update,omitempty"`
 }
 
+type IndexSnapshort struct {
+	Name string   `json:"name"`
+	Cols []string `json:"cols"`
+}
+
 type TableSnapshot struct {
 	Name    string           `json:"name"`
 	Columns []ColumnSnapshot `json:"columns"`
+	Indexes []IndexSnapshort `json:"indexes"`
 }
 
 type EnumSnapshot struct {
@@ -40,6 +46,8 @@ type Snapshot struct {
 	Enums  []EnumSnapshot  `json:"enums"`
 }
 
+// IMPORTANT: This function would be called from a dynamycally generated module in loader
+// TODO: I will have to endure that changees to runtime Snapshot does not break this one
 func BuildSnapshot() Snapshot {
 	var tables []TableSnapshot
 	for _, t := range schema.Registry {
@@ -58,7 +66,14 @@ func BuildSnapshot() Snapshot {
 			}
 			cols = append(cols, cs)
 		}
-		tables = append(tables, TableSnapshot{Name: t.TableName(), Columns: cols})
+		var idx []IndexSnapshort
+		for _, i := range t.GetIndices() {
+			is := IndexSnapshort{
+				Name: i.Name, Cols: i.Cols,
+			}
+			idx = append(idx, is)
+		}
+		tables = append(tables, TableSnapshot{Name: t.TableName(), Columns: cols, Indexes: idx})
 	}
 	sort.Slice(tables, func(i, j int) bool { return tables[i].Name < tables[j].Name })
 

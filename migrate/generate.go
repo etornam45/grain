@@ -8,10 +8,6 @@ import (
 	"time"
 )
 
-func Generate(dir, name string, prompt PromptFunc) (string, error) {
-	return generate(BuildSnapshot(), dir, name, prompt)
-}
-
 func GenerateFromSnapshot(newSnap Snapshot, dir, name string, prompt PromptFunc) (string, error) {
 	return generate(newSnap, dir, name, prompt)
 }
