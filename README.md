@@ -49,7 +49,7 @@ usage:
 
 ```go
 var newID string
-err = query.Insert(schema.Users).
+err = query.Insert(model.Users).
 	Values(map[string]any{
 		"name":   "Ama",
 		"email":  "ama@example.com",
@@ -59,7 +59,7 @@ err = query.Insert(schema.Users).
 	Scan(ctx, conn, &newID)
 ```
 
-2. **Selecting**
+1. **Selecting**
 
 ```go
 type User struct {
@@ -77,7 +77,7 @@ users, err := query.Select[User](schema.Users.Cols.ID, schema.Users.Cols.Name, s
 	All(ctx, conn)
 ```
 
-3. **Joins**
+1. **Joins**
 
 ```go
 rows, err := query.Select[UserOrderRow](schema.Users.Cols.Name, schema.Orders.Cols.Total).
@@ -87,13 +87,13 @@ rows, err := query.Select[UserOrderRow](schema.Users.Cols.Name, schema.Orders.Co
 	All(ctx, conn)
 ```
 
-4. **Deleting**
+1. **Deleting**
 
 ```go
 _, err = query.Delete(schema.Users).Where(query.Eq(schema.Users.Cols.ID, newID)).Run(ctx, tx)
 ```
 
-5. **Transactions**
+1. **Transactions**
 
 ```go
 err = conn.Transaction(ctx, func(tx *db.Tx) error {
@@ -110,5 +110,5 @@ err = conn.Transaction(ctx, func(tx *db.Tx) error {
 })
 ```
 
-
 > NOTE: this project is in it's early development and may have API changes before a major release
+
