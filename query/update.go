@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"grain/db"
@@ -21,9 +22,14 @@ func Update(table namedTable) *UpdateBuilder {
 }
 
 func (u *UpdateBuilder) Set(vals map[string]any) *UpdateBuilder {
-	for k, v := range vals {
+	keys := make([]string, 0, len(vals))
+	for k := range vals {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
 		u.setCols = append(u.setCols, k)
-		u.setVals = append(u.setVals, v)
+		u.setVals = append(u.setVals, vals[k])
 	}
 	return u
 }

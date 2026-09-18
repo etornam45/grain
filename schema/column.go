@@ -1,7 +1,7 @@
 package schema
 
 type ColumnDef struct {
-	Table          string //NOTE: set by Table() once the column is attached
+	Table          string
 	Name           string
 	Type           *ColumnType
 	IsPK           bool
@@ -35,7 +35,6 @@ func (c *ColumnDef) String() string {
 	}
 	return c.Table + "." + c.Name
 }
-
 
 func (c *ColumnDef) Str() string {
 	return c.String()
