@@ -1,16 +1,40 @@
-### Welcome to Grain
+# Grain
 
-Grain is an Object-Relational Mapping (ORM) for Go 
+**Grain** is a type-safe Object-Relational Mapping (ORM) for Go, built on
+[pgx](https://github.com/jackc/pgx). It targets PostgreSQL only.
 
-### Documentation
+- **Type-safe schema** — tables and columns defined once in Go; column binds
+  are checked at startup, not on first SQL error.
+- **Snapshot-driven migrations** — edit your schema, then `grain generate`
+  diffs it against the last applied snapshot and writes the SQL for you.
+- **Fluent query builder** — `SELECT`/`INSERT`/`UPDATE`/`DELETE` with joins,
+  conditions, grouping and pagination, parameterized everywhere.
+- **Transactions** — one method that begins, commits and rolls back for you.
+- **Reflection-based scanning** — rows map into plain structs via `db:` tags.
 
-Full library reference and tutorials live in [docs/](docs/README.md):
+## Contents
 
-- [Schema](docs/schema.md) — tables, columns, types, enums, foreign keys, indexes
-- [Query](docs/query.md) — select/insert/update/delete, conditions, joins, aggregation
-- [db & scan](docs/db-and-scan.md) — connections, transactions, row mapping
-- [Migrations & CLI](docs/migrations.md) — the `grain` CLI, generation, apply/rollback/status
-- [Tutorials](docs/tutorials/) — getting started, relationships
+- [Installation](#installation)
+- [Usage example](#usage-example)
+- [Migrations](#migrations)
+- [Querying](#querying)
+- [Documentation](#documentation)
+- [Requirements](#requirements)
+- [License](#license)
+
+## Installation
+
+Add the library and the `grain` CLI to your project:
+
+```bash
+go get github.com/etornam45/grain@latest
+go install github.com/etornam45/grain/cmd/grain@latest   # CLI -> $(go env GOPATH)/bin/grain
+```
+
+The CLI is a separate binary from the library — you only need it if you manage
+migrations with `grain generate` / `grain migrate`.
+
+A runnable version of everything below lives in [`examples/basic`](examples/basic).
 
 ### Usage Example
 
@@ -34,12 +58,13 @@ var Users = schema.Table[usersColumns]("users",
 
 
 
-### Migration
+### Migrations
 
-You can generate a migration for go using 
+Generate a migration from your schema code, then apply it:
 
 ```bash
-grain generate -schema path/to/model "create user table" 
+grain generate -schema path/to/model "create user table"
+DATABASE_URL=postgres://user:pass@localhost:5432/app grain migrate up
 ```
 
 Command usage
@@ -49,17 +74,23 @@ usage:
   grain generate -schema <dir> [name]
   grain migrate up                       (requires DATABASE_URL)
   grain migrate down                     (requires DATABASE_URL)
+  grain migrate status                   (requires DATABASE_URL)
 ```
 
 
 
 ### Querying
 
+These snippets assume a table defined as in the [Usage example](#usage-example),
+plus `ctx`, `conn`, `tx` and `newID` in scope. `query` is
+`github.com/etornam45/grain/query` and `db` is
+`github.com/etornam45/grain/db`.
+
 1. **Inserting**
 
 ```go
 var newID string
-err = query.Insert(model.Users).
+err = query.Insert(schema.Users).
 	Values(map[string]any{
 		"name":   "Ama",
 		"email":  "ama@example.com",
@@ -69,7 +100,7 @@ err = query.Insert(model.Users).
 	Scan(ctx, conn, &newID)
 ```
 
-1. **Selecting**
+2. **Selecting**
 
 ```go
 type User struct {
@@ -82,12 +113,12 @@ type User struct {
 users, err := query.Select[User](schema.Users.Cols.ID, schema.Users.Cols.Name, schema.Users.Cols.Email, schema.Users.Cols.Status).
 	From(schema.Users).
 	Where(query.Eq(schema.Users.Cols.Status, "active")).
-	OrderBy([]string {schema.Users.Cols.Name.Str()}, query.Asc).
+	OrderBy([]string{schema.Users.Cols.Name.Str()}, query.Asc).
 	Limit(10).
 	All(ctx, conn)
 ```
 
-1. **Joins**
+3. **Joins**
 
 ```go
 rows, err := query.Select[UserOrderRow](schema.Users.Cols.Name, schema.Orders.Cols.Total).
@@ -97,13 +128,13 @@ rows, err := query.Select[UserOrderRow](schema.Users.Cols.Name, schema.Orders.Co
 	All(ctx, conn)
 ```
 
-1. **Deleting**
+4. **Deleting**
 
 ```go
 _, err = query.Delete(schema.Users).Where(query.Eq(schema.Users.Cols.ID, newID)).Run(ctx, tx)
 ```
 
-1. **Transactions**
+5. **Transactions**
 
 ```go
 err = conn.Transaction(ctx, func(tx *db.Tx) error {
@@ -120,5 +151,22 @@ err = conn.Transaction(ctx, func(tx *db.Tx) error {
 })
 ```
 
-> NOTE: this project is in it's early development and may have API changes before a major release
+### Documentation
+
+Full library reference and tutorials live in [docs/](docs/README.md):
+
+- [Schema](docs/schema.md) — tables, columns, types, enums, foreign keys, indexes
+- [Query](docs/query.md) — select/insert/update/delete, conditions, joins, aggregation
+- [db & scan](docs/db-and-scan.md) — connections, transactions, row mapping
+- [Migrations & CLI](docs/migrations.md) — the `grain` CLI, generation, apply/rollback/status
+- [Tutorials](docs/tutorials/) — getting started, relationships
+
+### Requirements
+
+- Go 1.25+
+- PostgreSQL 12+
+
+### License
+
+Grain is released under the Apache License 2.0. See [`LICENSE`](LICENSE) for details.
 
