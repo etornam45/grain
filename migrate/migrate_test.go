@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func ignorePrompt(PromptContext) (Resolution, error) { return Resolution{Action: "ignore"}, nil }
@@ -156,6 +157,22 @@ func TestSplitMigrationTreatsUndirectedSQLAsUp(t *testing.T) {
 	up, down, noTxUp, noTxDown := splitMigration("CREATE TABLE users ();\n")
 	if up != "CREATE TABLE users ();" || down != "" || noTxUp != "" || noTxDown != "" {
 		t.Fatalf("unexpected sections: up=%q down=%q noTxUp=%q noTxDown=%q", up, down, noTxUp, noTxDown)
+	}
+}
+
+func TestNextMigrationVersionAvoidsExistingFiles(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, time.September, 18, 12, 0, 0, 0, time.UTC)
+	base := now.Format("20060102150405000")
+	if err := os.WriteFile(filepath.Join(dir, base+"_first.sql"), []byte("-- +migrate Up"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	version, err := nextMigrationVersion(dir, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != base+"01" {
+		t.Fatalf("version = %q, want %q", version, base+"01")
 	}
 }
 
