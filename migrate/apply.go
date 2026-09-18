@@ -80,8 +80,8 @@ func LoadMigrations(dir string) ([]MigrationFile, error) {
 
 func splitMigration(content string) (up, down, noTxUp, noTxDown string) {
 	sections := map[string]*strings.Builder{
-		"up": &strings.Builder{}, "down": &strings.Builder{},
-		"no-tx-up": &strings.Builder{}, "no-tx-down": &strings.Builder{},
+		"up": {}, "down": {},
+		"no-tx-up": {}, "no-tx-down": {},
 	}
 	current := ""
 	sawDirective := false
