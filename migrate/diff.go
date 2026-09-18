@@ -2,6 +2,7 @@ package migrate
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -67,20 +68,19 @@ func diffTables(old, new Snapshot, prompt PromptFunc) ([]Change, error) {
 	}
 
 	var changes []Change
-	matchedOld := map[string]bool{}
-	matchedNew := map[string]bool{}
-
-	for name, newT := range newTables {
+	for _, name := range sortedKeys(newTables) {
+		newT := newTables[name]
 		oldT, ok := oldTables[name]
 		if !ok {
 			continue
 		}
-		matchedOld[name] = true
-		matchedNew[name] = true
 		colChanges, err := diffColumns(name, oldT, newT, prompt)
 		idxChanges, err2 := diffIndexes(name, oldT, newT)
-		if err != nil || err2 != nil {
+		if err != nil {
 			return nil, err
+		}
+		if err2 != nil {
+			return nil, err2
 		}
 		changes = append(changes, colChanges...)
 		changes = append(changes, idxChanges...)
@@ -106,6 +106,11 @@ func diffTables(old, new Snapshot, prompt PromptFunc) ([]Change, error) {
 				return nil, err
 			}
 			changes = append(changes, colChanges...)
+			idxChanges, err := diffIndexes(res.Target, oldTables[oldName], newTables[res.Target])
+			if err != nil {
+				return nil, err
+			}
+			changes = append(changes, idxChanges...)
 		case "delete":
 			changes = append(changes, Change{
 				Kind:    DropTable,
@@ -116,7 +121,11 @@ func diffTables(old, new Snapshot, prompt PromptFunc) ([]Change, error) {
 		}
 	}
 
-	for _, t := range topoSortByFK(newTables, unmatchedNew) {
+	newTablesInOrder, err := topoSortByFK(newTables, unmatchedNew)
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range newTablesInOrder {
 		changes = append(changes, createTableChange(t))
 		idxChanges, err := diffIndexes(t.Name, TableSnapshot{}, t)
 		if err != nil {
@@ -142,7 +151,8 @@ func diffColumns(table string, oldT, newT TableSnapshot, prompt PromptFunc) ([]C
 	matchedOld := map[string]bool{}
 	matchedNew := map[string]bool{}
 
-	for name, newC := range newCols {
+	for _, name := range sortedKeys(newCols) {
+		newC := newCols[name]
 		oldC, ok := oldCols[name]
 		if !ok {
 			continue
@@ -165,12 +175,12 @@ func diffColumns(table string, oldT, newT TableSnapshot, prompt PromptFunc) ([]C
 	}
 
 	var unmatchedOld, unmatchedNew []string
-	for name := range oldCols {
+	for _, name := range sortedKeys(oldCols) {
 		if !matchedOld[name] {
 			unmatchedOld = append(unmatchedOld, name)
 		}
 	}
-	for name := range newCols {
+	for _, name := range sortedKeys(newCols) {
 		if !matchedNew[name] {
 			unmatchedNew = append(unmatchedNew, name)
 		}
@@ -225,30 +235,53 @@ func diffIndexes(table string, oldT, newT TableSnapshot) ([]Change, error) {
 
 	var changes []Change
 	unmatchedOld, unmatchedNew := findUnmatched(oldIdx, newIdx)
+	for _, name := range sortedKeys(oldIdx) {
+		oldIndex := oldIdx[name]
+		newIndex, existsInNew := newIdx[name]
+		if !existsInNew || sameColumns(oldIndex.Cols, newIndex.Cols) {
+			continue
+		}
+		unmatchedOld = append(unmatchedOld, name)
+		unmatchedNew = append(unmatchedNew, name)
+	}
+	sort.Strings(unmatchedOld)
+	sort.Strings(unmatchedNew)
 
 	for _, oldName := range unmatchedOld {
 		changes = append(changes, Change{
 			Kind:    DropIndex,
-			UpSQL:   fmt.Sprintf("DROP INDEX CONCURRENTLY IF EXISTS %s;", oldName),
-			DownSQL: fmt.Sprintf("CREATE INDEX CONCURRENTLY %s ON %s (%s);", oldName, table, strings.Join(oldIdx[oldName].Cols, ", ")),
+			UpSQL:   fmt.Sprintf("DROP INDEX IF EXISTS %s;", oldName),
+			DownSQL: fmt.Sprintf("CREATE INDEX %s ON %s (%s);", oldName, table, strings.Join(oldIdx[oldName].Cols, ", ")),
 		})
 	}
 
 	for _, newName := range unmatchedNew {
 		changes = append(changes, Change{
 			Kind:    AddIndex,
-			UpSQL:   fmt.Sprintf("CREATE INDEX CONCURRENTLY %s ON %s (%s);", newName, table, strings.Join(newIdx[newName].Cols, ", ")),
-			DownSQL: fmt.Sprintf("DROP INDEX CONCURRENTLY IF EXISTS %s;", newName),
+			UpSQL:   fmt.Sprintf("CREATE INDEX %s ON %s (%s);", newName, table, strings.Join(newIdx[newName].Cols, ", ")),
+			DownSQL: fmt.Sprintf("DROP INDEX IF EXISTS %s;", newName),
 		})
 	}
 
 	return changes, nil
 }
 
+func sameColumns(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func findUnmatched[T any](old, new map[string]T) ([]string, []string) {
 	matchedOld := map[string]bool{}
 	matchedNew := map[string]bool{}
-	for name, _ := range new {
+	for name := range new {
 		_, ok := old[name]
 		if !ok {
 			continue
@@ -259,12 +292,12 @@ func findUnmatched[T any](old, new map[string]T) ([]string, []string) {
 	}
 
 	var unmatchedOld, unmatchedNew []string
-	for name := range old {
+	for _, name := range sortedKeys(old) {
 		if !matchedOld[name] {
 			unmatchedOld = append(unmatchedOld, name)
 		}
 	}
-	for name := range new {
+	for _, name := range sortedKeys(new) {
 		if !matchedNew[name] {
 			unmatchedNew = append(unmatchedNew, name)
 		}
@@ -272,32 +305,56 @@ func findUnmatched[T any](old, new map[string]T) ([]string, []string) {
 	return unmatchedOld, unmatchedNew
 }
 
-// FIXME: It doesn't detect cycles — a circular FK between two brand-new tables still
-// needs a manual migration (create both, then ALTER TABLE ADD CONSTRAINT).
-func topoSortByFK(all map[string]TableSnapshot, names []string) []TableSnapshot {
+func sortedKeys[T any](m map[string]T) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func topoSortByFK(all map[string]TableSnapshot, names []string) ([]TableSnapshot, error) {
 	visited := map[string]bool{}
+	visiting := map[string]bool{}
 	var order []TableSnapshot
-	var visit func(name string)
-	visit = func(name string) {
+	var visit func(name string) error
+	visit = func(name string) error {
 		if visited[name] {
-			return
+			return nil
 		}
-		visited[name] = true
+		if visiting[name] {
+			return fmt.Errorf("foreign-key cycle involving new table %q; create the tables first and add the constraint in a separate migration", name)
+		}
 		t, ok := all[name]
 		if !ok {
-			return
+			return nil
 		}
+		visiting[name] = true
 		for _, c := range t.Columns {
 			if c.RefTable != "" && contains(names, c.RefTable) {
-				visit(c.RefTable)
+				if err := visit(c.RefTable); err != nil {
+					return err
+				}
 			}
 		}
+		visiting[name] = false
+		visited[name] = true
 		order = append(order, t)
+		return nil
 	}
-	for _, name := range names {
-		visit(name)
+	for _, name := range sortedStringSlice(names) {
+		if err := visit(name); err != nil {
+			return nil, err
+		}
 	}
-	return order
+	return order, nil
+}
+
+func sortedStringSlice(values []string) []string {
+	result := append([]string(nil), values...)
+	sort.Strings(result)
+	return result
 }
 
 func contains(list []string, s string) bool {
