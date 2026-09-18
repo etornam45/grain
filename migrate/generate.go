@@ -50,7 +50,10 @@ func generate(newSnap Snapshot, dir, name string, prompt PromptFunc) (string, er
 		}
 	}
 
-	version := time.Now().UTC().Format("20060102150405")
+	version, err := nextMigrationVersion(dir, time.Now().UTC())
+	if err != nil {
+		return "", err
+	}
 	fileName := fmt.Sprintf("%s_%s.sql", version, sanitize(name))
 	path := filepath.Join(dir, fileName)
 
@@ -81,6 +84,30 @@ func generate(newSnap Snapshot, dir, name string, prompt PromptFunc) (string, er
 	}
 
 	return path, nil
+}
+
+func nextMigrationVersion(dir string, now time.Time) (string, error) {
+	base := now.UTC().Format("20060102150405000")
+	for suffix := 0; ; suffix++ {
+		version := base
+		if suffix > 0 {
+			version = fmt.Sprintf("%s%02d", base, suffix)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "meta", version+"_snapshot.json")); err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
+		matches, err := filepath.Glob(filepath.Join(dir, version+"_*.sql"))
+		if err != nil {
+			return "", err
+		}
+		if len(matches) == 0 {
+			if _, err := os.Stat(filepath.Join(dir, "meta", version+"_snapshot.json")); os.IsNotExist(err) {
+				return version, nil
+			} else if err != nil {
+				return "", err
+			}
+		}
+	}
 }
 
 // ManualReviewRequiredError prevents the migration journal from claiming that a
