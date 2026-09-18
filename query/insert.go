@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"grain/db"
+	"sort"
 	"strings"
 )
 
@@ -19,9 +20,14 @@ func Insert(table namedTable) *InsertBuilder {
 }
 
 func (i *InsertBuilder) Values(row map[string]any) *InsertBuilder {
-	for k, v := range row {
+	keys := make([]string, 0, len(row))
+	for k := range row {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
 		i.cols = append(i.cols, k)
-		i.vals = append(i.vals, v)
+		i.vals = append(i.vals, row[k])
 	}
 	return i
 }
@@ -52,9 +58,8 @@ func (i *InsertBuilder) Run(ctx context.Context, exec db.Executor) error {
 	return err
 }
 
-
-//	var id string
-//	query.Insert(Users).Values(row).Returning("id").Scan(ctx, conn, &id)
+// var id string
+// query.Insert(Users).Values(row).Returning("id").Scan(ctx, conn, &id)
 func (i *InsertBuilder) Scan(ctx context.Context, exec db.Executor, dest ...any) error {
 	sqlStr, args := i.SQL()
 	return exec.QueryRowContext(ctx, sqlStr, args...).Scan(dest...)

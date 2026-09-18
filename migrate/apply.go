@@ -13,11 +13,13 @@ import (
 )
 
 type MigrationFile struct {
-	Version int64
-	Name    string
-	UpSQL   string
-	DownSQL string
-	Path    string
+	Version     int64
+	Name        string
+	UpSQL       string
+	DownSQL     string
+	NoTxUpSQL   string
+	NoTxDownSQL string
+	Path        string
 }
 
 var filenamePattern = regexp.MustCompile(`^(\d+)_(.+)\.sql$`)
@@ -45,9 +47,10 @@ func LoadMigrations(dir string) ([]MigrationFile, error) {
 		if err != nil {
 			return nil, err
 		}
-		up, down := splitMigration(string(raw))
+		up, down, noTxUp, noTxDown := splitMigration(string(raw))
 		files = append(files, MigrationFile{
 			Version: version, Name: m[2], UpSQL: up, DownSQL: down,
+			NoTxUpSQL: noTxUp, NoTxDownSQL: noTxDown,
 			Path: filepath.Join(dir, e.Name()),
 		})
 	}
@@ -56,17 +59,46 @@ func LoadMigrations(dir string) ([]MigrationFile, error) {
 	return files, nil
 }
 
-func splitMigration(content string) (up, down string) {
-	const upMarker = "-- +migrate Up"
-	const downMarker = "-- +migrate Down"
-	upIdx := strings.Index(content, upMarker)
-	downIdx := strings.Index(content, downMarker)
-	if upIdx == -1 || downIdx == -1 {
-		return content, ""
+func splitMigration(content string) (up, down, noTxUp, noTxDown string) {
+	sections := map[string]*strings.Builder{
+		"up": &strings.Builder{}, "down": &strings.Builder{},
+		"no-tx-up": &strings.Builder{}, "no-tx-down": &strings.Builder{},
 	}
-	up = strings.TrimSpace(content[upIdx+len(upMarker) : downIdx])
-	down = strings.TrimSpace(content[downIdx+len(downMarker):])
-	return up, down
+	current := ""
+	sawDirective := false
+	for _, line := range strings.SplitAfter(content, "\n") {
+		if section, ok := migrationSection(line); ok {
+			current = section
+			sawDirective = true
+			continue
+		}
+		if current != "" {
+			sections[current].WriteString(line)
+		}
+	}
+	if !sawDirective {
+		return strings.TrimSpace(content), "", "", ""
+	}
+	return strings.TrimSpace(sections["up"].String()),
+		strings.TrimSpace(sections["down"].String()),
+		strings.TrimSpace(sections["no-tx-up"].String()),
+		strings.TrimSpace(sections["no-tx-down"].String())
+}
+
+func migrationSection(line string) (string, bool) {
+	normalized := strings.ToLower(strings.Join(strings.Fields(line), ""))
+	switch normalized {
+	case "--+migrateup":
+		return "up", true
+	case "--+migratedown":
+		return "down", true
+	case "--+requiresnotxup":
+		return "no-tx-up", true
+	case "--+requiresnotxdown":
+		return "no-tx-down", true
+	default:
+		return "", false
+	}
 }
 
 func ensureMigrationsTable(ctx context.Context, dbConn *sql.DB) error {
@@ -115,6 +147,11 @@ func Apply(ctx context.Context, dbConn *sql.DB, dir string) error {
 		if applied[f.Version] {
 			continue
 		}
+		// PostgreSQL requires some statements (notably ALTER TYPE ... ADD VALUE)
+		// to be committed before the transactional migration can use their result.
+		if err := runOutsideTx(ctx, dbConn, f.NoTxUpSQL); err != nil {
+			return fmt.Errorf("migration %d_%s no-transaction up failed: %w", f.Version, f.Name, err)
+		}
 		if err := runInTx(ctx, dbConn, f.UpSQL, f.Version, f.Name); err != nil {
 			return fmt.Errorf("migration %d_%s failed: %w", f.Version, f.Name, err)
 		}
@@ -123,14 +160,24 @@ func Apply(ctx context.Context, dbConn *sql.DB, dir string) error {
 	return nil
 }
 
+func runOutsideTx(ctx context.Context, dbConn *sql.DB, sqlText string) error {
+	if !hasExecutableSQL(sqlText) {
+		return nil
+	}
+	_, err := dbConn.ExecContext(ctx, sqlText)
+	return err
+}
+
 func runInTx(ctx context.Context, dbConn *sql.DB, sqlText string, version int64, name string) error {
 	tx, err := dbConn.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, sqlText); err != nil {
-		_ = tx.Rollback()
-		return err
+	if hasExecutableSQL(sqlText) {
+		if _, err := tx.ExecContext(ctx, sqlText); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO grain.schema_migrations (version, name) VALUES ($1, $2)`, version, name,
@@ -161,14 +208,24 @@ func RollbackLast(ctx context.Context, dbConn *sql.DB, dir string) error {
 	if last == nil {
 		return fmt.Errorf("no applied migrations to roll back")
 	}
+	if !hasExecutableSQL(last.DownSQL) && !hasExecutableSQL(last.NoTxDownSQL) {
+		return fmt.Errorf("migration %d_%s is irreversible: no executable down migration", last.Version, last.Name)
+	}
+	// Run the no-transaction down section first: an index must be dropped before
+	// a transactional table drop, and any retry must use idempotent SQL here.
+	if err := runOutsideTx(ctx, dbConn, last.NoTxDownSQL); err != nil {
+		return fmt.Errorf("migration %d_%s no-transaction down failed: %w", last.Version, last.Name, err)
+	}
 
 	tx, err := dbConn.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, last.DownSQL); err != nil {
-		_ = tx.Rollback()
-		return err
+	if hasExecutableSQL(last.DownSQL) {
+		if _, err := tx.ExecContext(ctx, last.DownSQL); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
 	}
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM grain.schema_migrations WHERE version = $1`, last.Version,
@@ -177,4 +234,14 @@ func RollbackLast(ctx context.Context, dbConn *sql.DB, dir string) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func hasExecutableSQL(sqlText string) bool {
+	for _, line := range strings.Split(sqlText, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "--") {
+			return true
+		}
+	}
+	return false
 }

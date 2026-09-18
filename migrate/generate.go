@@ -25,19 +25,28 @@ func generate(newSnap Snapshot, dir, name string, prompt PromptFunc) (string, er
 	if len(changes) == 0 {
 		return "", fmt.Errorf("no schema changes detected")
 	}
+	for _, change := range changes {
+		if change.Destructive {
+			return "", &ManualReviewRequiredError{Changes: changes}
+		}
+	}
 
-	var up, down, review strings.Builder
+	var up, noTxUp, down, noTxDown strings.Builder
 	for _, c := range changes {
-		switch {
-		case c.Destructive:
-			fmt.Fprintf(&review, "-- DESTRUCTIVE (%s): %s\n-- %s\n\n", c.Kind, c.Note, c.UpSQL)
-		case c.RequiresNoTx:
-			fmt.Fprintf(&review, "-- RUN OUTSIDE THIS MIGRATION (%s): %s\n-- %s\n\n", c.Kind, c.Note, c.UpSQL)
-		default:
+		if c.RequiresNoTx {
+			fmt.Fprintf(&noTxUp, "%s\n", c.UpSQL)
+		} else {
 			fmt.Fprintf(&up, "%s\n", c.UpSQL)
-			if c.DownSQL != "" {
-				fmt.Fprintf(&down, "%s\n", c.DownSQL)
-			}
+		}
+	}
+	for i := len(changes) - 1; i >= 0; i-- {
+		if changes[i].DownSQL == "" {
+			continue
+		}
+		if changes[i].RequiresNoTx {
+			fmt.Fprintf(&noTxDown, "%s\n", changes[i].DownSQL)
+		} else {
+			fmt.Fprintf(&down, "%s\n", changes[i].DownSQL)
 		}
 	}
 
@@ -46,18 +55,18 @@ func generate(newSnap Snapshot, dir, name string, prompt PromptFunc) (string, er
 	path := filepath.Join(dir, fileName)
 
 	var content strings.Builder
+	if noTxUp.Len() > 0 {
+		content.WriteString("-- +RequiresNoTx Up\n")
+		content.WriteString(noTxUp.String())
+		content.WriteString("\n")
+	}
 	content.WriteString("-- +migrate Up\n")
 	content.WriteString(up.String())
 	content.WriteString("\n-- +migrate Down\n")
 	content.WriteString(down.String())
-	if review.Len() > 0 {
-		content.WriteString("\n-- ---------------------------------------------------------------\n")
-		content.WriteString("-- The changes below were detected but NOT included above: they're\n")
-		content.WriteString("-- destructive in a way no confirmation resolves, or can't run inside\n")
-		content.WriteString("-- this file's transaction. Review each one, then apply by hand or\n")
-		content.WriteString("-- move it into its own file.\n")
-		content.WriteString("-- ---------------------------------------------------------------\n\n")
-		content.WriteString(review.String())
+	if noTxDown.Len() > 0 {
+		content.WriteString("\n-- +RequiresNoTx Down\n")
+		content.WriteString(noTxDown.String())
 	}
 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -72,6 +81,22 @@ func generate(newSnap Snapshot, dir, name string, prompt PromptFunc) (string, er
 	}
 
 	return path, nil
+}
+
+// ManualReviewRequiredError prevents the migration journal from claiming that a
+// destructive change was applied when the generated SQL cannot safely perform it.
+type ManualReviewRequiredError struct {
+	Changes []Change
+}
+
+func (e *ManualReviewRequiredError) Error() string {
+	var details []string
+	for _, change := range e.Changes {
+		if change.Destructive {
+			details = append(details, fmt.Sprintf("%s: %s", change.Kind, change.Note))
+		}
+	}
+	return "manual migration required before updating the schema snapshot: " + strings.Join(details, "; ")
 }
 
 func sanitize(name string) string {
