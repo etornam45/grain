@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"grain/db"
 	"grain/migrate"
-	//   _ "github.com/jackc/pgx/v5/stdlib"
 )
 
 func main() {

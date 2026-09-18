@@ -145,13 +145,14 @@ func (q *SelectBuilder[T]) SQL() (string, []any) {
 		b.WriteString(havingSQL)
 		args = append(args, havingArgs...)
 	}
-	
+
 	if len(q.orderBy) > 0 {
 		b.WriteString(" ORDER BY ")
+		parts := make([]string, 0, len(q.orderBy))
 		for _, o := range q.orderBy {
-			b.WriteString(strings.Join(o.cols, ", "))
-			b.WriteString(string(o.dir))
+			parts = append(parts, strings.Join(o.cols, ", ")+" "+string(o.dir))
 		}
+		b.WriteString(strings.Join(parts, ", "))
 	}
 	if q.limitN != nil {
 		fmt.Fprintf(&b, " LIMIT %d", *q.limitN)

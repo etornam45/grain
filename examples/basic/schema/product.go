@@ -14,4 +14,3 @@ var Product = schema.Table[ProductColums]("product",
 	schema.Column("barcode", schema.Int()).Index(),
 ).
 Index("idx_product_name_sku", "name", "sku")
-Index("idx_product_sku", "sku")
