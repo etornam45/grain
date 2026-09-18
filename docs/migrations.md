@@ -4,6 +4,17 @@ Grain ships a CLI (`cmd/grain`) that generates and applies migrations from your
 Go schema definitions. Instead of hand-writing SQL for every change, you edit
 your `schema` package and Grain diffs it against the last applied snapshot.
 
+## Installing the CLI
+
+```bash
+go install github.com/etornam45/grain/cmd/grain@latest
+```
+
+This installs `grain` into `$(go env GOPATH)/bin` — add that directory to your
+`PATH` if it isn't already. (If you're developing Grain itself, you can run it
+with `go run ./cmd/grain` instead.) The CLI is a separate binary from the
+library: users of your application don't need it unless they manage migrations.
+
 ```bash
 > grain --help
 usage:
