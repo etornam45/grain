@@ -16,7 +16,12 @@ program.
 mkdir shop && cd shop
 go mod init shop
 go get github.com/etornam45/grain@latest
+go install github.com/etornam45/grain/cmd/grain@latest
 ```
+
+(`go install` puts the `grain` CLI in `$(go env GOPATH)/bin` — make sure that's
+on your `PATH` so the `grain generate`/`grain migrate` commands below work.
+With just `go get` you have the library but no command.)
 
 This adds Grain (and its `github.com/jackc/pgx/v5` dependency) to your
 `go.mod` as a normal dependency — no `replace` needed since it's published.
