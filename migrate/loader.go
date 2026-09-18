@@ -30,7 +30,7 @@ import (
 	"fmt"
 	"os"
 
-	"grain/migrate"
+	"github.com/etornam45/grain/migrate"
 	_ %q
 )
 

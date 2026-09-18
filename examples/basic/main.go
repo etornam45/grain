@@ -8,9 +8,9 @@ import (
 
 	//   _ "github.com/lib/pq"                -> db.Open("postgres", dsn)
 
-	"grain/db"
-	"grain/examples/basic/schema"
-	"grain/query"
+	"github.com/etornam45/grain/db"
+	"github.com/etornam45/grain/examples/basic/schema"
+	"github.com/etornam45/grain/query"
 )
 
 type User struct {

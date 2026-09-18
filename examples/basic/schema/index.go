@@ -1,6 +1,6 @@
 package schema
 
-import "grain/schema"
+import "github.com/etornam45/grain/schema"
 
 var UserStatus = schema.Enum("user_status", "active", "suspended", "banned")
 

@@ -1,7 +1,7 @@
 # Query
 
-`grain/query` is a fluent, type-safe SQL builder. It never talks to PostgreSQL
-directly *and* it never needs to import `grain/schema` — builders work against
+`github.com/etornam45/grain/query` is a fluent, type-safe SQL builder. It never talks to PostgreSQL
+directly *and* it never needs to import `github.com/etornam45/grain/schema` — builders work against
 anything with a `TableName() string` method (tables) and anything with a
 `String() string` method (columns), so `schema.ColumnDef` values plug straight
 in.

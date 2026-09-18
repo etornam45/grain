@@ -3,7 +3,7 @@ package query
 import (
 	"context"
 	"fmt"
-	"grain/db"
+	"github.com/etornam45/grain/db"
 	"sort"
 	"strings"
 )

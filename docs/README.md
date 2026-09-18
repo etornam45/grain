@@ -8,11 +8,11 @@ Grain is split into a few small, composable packages:
 
 | Package         | Purpose                                                                 |
 | --------------- | ----------------------------------------------------------------------- |
-| `grain/schema`  | Type-safe table, column, enum and index definitions                     |
-| `grain/query`   | Fluent SQL query builder for `SELECT`, `INSERT`, `UPDATE`, `DELETE`     |
-| `grain/db`      | Connection wrapper (`Open`, `Transaction`) and the `Executor` interface |
-| `grain/scan`    | Reflection-based scanning of rows into Go structs via `db:` tags        |
-| `grain/migrate` | Snapshot-driven migration generation, apply, rollback and status        |
+| `github.com/etornam45/grain/schema`  | Type-safe table, column, enum and index definitions                     |
+| `github.com/etornam45/grain/query`   | Fluent SQL query builder for `SELECT`, `INSERT`, `UPDATE`, `DELETE`     |
+| `github.com/etornam45/grain/db`      | Connection wrapper (`Open`, `Transaction`) and the `Executor` interface |
+| `github.com/etornam45/grain/scan`    | Reflection-based scanning of rows into Go structs via `db:` tags        |
+| `github.com/etornam45/grain/migrate` | Snapshot-driven migration generation, apply, rollback and status        |
 | `grain` CLI     | `generate`, `migrate up / down / status`                                |
 
 
@@ -55,9 +55,9 @@ import (
     "fmt"
 
     _ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" driver
-    "grain/db"
-    "grain/examples/basic/schema"
-    "grain/query"
+    "github.com/etornam45/grain/db"
+    "github.com/etornam45/grain/examples/basic/schema"
+    "github.com/etornam45/grain/query"
 )
 
 func main() {

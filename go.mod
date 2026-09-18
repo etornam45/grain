@@ -1,4 +1,4 @@
-module grain
+module github.com/etornam45/grain
 
 go 1.27.1
 

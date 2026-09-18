@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"grain/schema"
+	"github.com/etornam45/grain/schema"
 )
 
 type ColumnSnapshot struct {

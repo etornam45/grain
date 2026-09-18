@@ -217,7 +217,7 @@ Files are matched by their `^(\d+)_.*\.sql$` filename pattern.
 
 ## Using migrate as a library
 
-Everything under the hood is exported from `grain/migrate`:
+Everything under the hood is exported from `github.com/etornam45/grain/migrate`:
 
 ```go
 migrate.LoadMigrations(dir)                 // []MigrationFile{Version, Name, UpSQL, DownSQL, NoTxUpSQL, NoTxDownSQL, Path, Checksum}
