@@ -15,20 +15,19 @@ program.
 ```bash
 mkdir shop && cd shop
 go mod init shop
-go get github.com/jackc/pgx/v5@latest
+go get github.com/etornam45/grain@latest
 ```
 
-Then add Grain. Since Grain is used via the module path `grain`, add it as a
-`replace` pointing at your checkout:
+This adds Grain (and its `github.com/jackc/pgx/v5` dependency) to your
+`go.mod` as a normal dependency — no `replace` needed since it's published.
+A minimal `go.mod` looks like:
 
 ```
 module shop
 
-go 1.22
+go 1.25.0
 
-require github.com/jackc/pgx/v5 v5.7.0
-
-replace grain => /path/to/grain
+require github.com/etornam45/grain v0.1.0
 ```
 
 Run `go mod tidy` to wire up the indirect dependencies.
