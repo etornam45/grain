@@ -1,6 +1,6 @@
 # Schema
 
-`grain/schema` lets you describe your database schema in Go, once. Every table
+`github.com/etornam45/grain/schema` lets you describe your database schema in Go, once. Every table
 and column is a typed value that the rest of Grain (queries, migrations,
 scanning) consumes.
 
@@ -15,7 +15,7 @@ The binding is done **by name**: the Go field name is converted to `snake_case`
 and looked up against the declared column names.
 
 ```go
-import "grain/schema"
+import "github.com/etornam45/grain/schema"
 
 type usersColumns struct {
     ID, Name, Email, Age, Status *schema.ColumnDef

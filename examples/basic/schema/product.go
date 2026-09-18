@@ -1,6 +1,6 @@
 package schema
 
-import "grain/schema"
+import "github.com/etornam45/grain/schema"
 
 type ProductColums struct {
 	Id, Name, Price, Sku, Barcode *schema.ColumnDef

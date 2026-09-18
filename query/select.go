@@ -3,8 +3,8 @@ package query
 import (
 	"context"
 	"fmt"
-	"grain/db"
-	"grain/scan"
+	"github.com/etornam45/grain/db"
+	"github.com/etornam45/grain/scan"
 	"strings"
 )
 

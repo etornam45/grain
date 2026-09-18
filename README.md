@@ -15,7 +15,7 @@ Full library reference and tutorials live in [docs/](docs/README.md):
 ### Usage Example
 
 ```go
-import "grain/schema"
+import "github.com/etornam45/grain/schema"
 
 var UserStatus = schema.Enum("user_status", "active", "suspended", "banned")
 

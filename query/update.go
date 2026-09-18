@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"grain/db"
+	"github.com/etornam45/grain/db"
 )
 
 type UpdateBuilder struct {

@@ -1,7 +1,7 @@
 # db & scan
 
-Grain's database connections live in `grain/db`; row mapping lives in
-`grain/scan`.
+Grain's database connections live in `github.com/etornam45/grain/db`; row mapping lives in
+`github.com/etornam45/grain/scan`.
 
 ## Connecting
 
@@ -10,7 +10,7 @@ Grain's database connections live in `grain/db`; row mapping lives in
 ```go
 import (
     _ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" driver
-    "grain/db"
+    "github.com/etornam45/grain/db"
 )
 
 conn, err := db.Open("pgx", "postgres://user:pass@localhost:5432/app?sslmode=disable")
@@ -20,8 +20,7 @@ if err != nil {
 defer conn.Close()
 ```
 
-Any `database/sql` driver works, so `github.com/lib/pq` (`db.Open("postgres",
-dsn)`) is a drop-in alternative. The `pgx` stdlib driver is used throughout
+Any `database/sql` driver works, so `github.com/lib/pq` (`db.Open("postgres", dsn)`) is a drop-in alternative. The `pgx` stdlib driver is used throughout
 this documentation and by the CLI.
 
 `*db.DB` embeds `*sql.DB`, so all standard `database/sql` methods (pool
@@ -67,15 +66,17 @@ if err != nil {
 Semantics:
 
 - `Transaction(ctx, fn)` begins a transaction, runs `fn` with a `*db.Tx`, and
-  **commits** when `fn` returns `nil`.
+**commits** when `fn` returns `nil`.
 - If `fn` returns an error, the transaction is **rolled back** and that error is
-  returned as-is.
+returned as-is.
 - Return an error from `fn` to abort; the rollback is automatic — you don't
-  need to call `Rollback()`.
+need to call `Rollback()`.
+
+
 
 ## Scan
 
-`grain/scan` maps query results into structs using reflection. Columns are
+`github.com/etornam45/grain/scan` maps query results into structs using reflection. Columns are
 matched to struct fields by `db` tag.
 
 ### Tags
@@ -92,6 +93,8 @@ type UserOrder struct {
 }
 ```
 
+
+
 ### Matching rules
 
 The scanner takes the result columns from the driver (e.g. `users.name`,
@@ -99,9 +102,9 @@ The scanner takes the result columns from the driver (e.g. `users.name`,
 
 1. A `db` tag equal to the column name is an exact match.
 2. Otherwise it falls back to a **suffix match** — a tag like `users.name`
-   still matches a result column `name` (and `users.name`.)
+  still matches a result column `name` (and `users.name`.)
 3. If no field matches a result column, scanning fails with an error naming the
-   offending column — you won't silently drop data.
+  offending column — you won't silently drop data.
 
 This is why single-table queries can use `db:"name"` while joined queries should
 use `db:"users.name"`.
