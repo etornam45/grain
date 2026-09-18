@@ -77,6 +77,22 @@ func main() {
 				fmt.Println("migrate down:", err)
 				os.Exit(1)
 			}
+		case "status":
+			statuses, err := migrate.Status(ctx, conn.DB, dir)
+			if err != nil {
+				fmt.Println("migrate status:", err)
+				os.Exit(1)
+			}
+			for _, status := range statuses {
+				state := "pending"
+				if status.Applied {
+					state = "applied"
+				}
+				if !status.ChecksumVerified {
+					state += " (checksum mismatch)"
+				}
+				fmt.Printf("%s %d_%s\n", state, status.Version, status.Name)
+			}
 		default:
 			usage()
 			os.Exit(1)
@@ -92,5 +108,6 @@ func usage() {
 	fmt.Println(`usage:
   grain generate -schema <dir> [name]
   grain migrate up                       (requires DATABASE_URL)
-  grain migrate down                     (requires DATABASE_URL)`)
+  grain migrate down                     (requires DATABASE_URL)
+  grain migrate status                   (requires DATABASE_URL)`)
 }
