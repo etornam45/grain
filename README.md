@@ -2,7 +2,17 @@
 
 Grain is an Object-Relational Mapping (ORM) for Go 
 
-Usage Example
+### Documentation
+
+Full library reference and tutorials live in [docs/](docs/README.md):
+
+- [Schema](docs/schema.md) — tables, columns, types, enums, foreign keys, indexes
+- [Query](docs/query.md) — select/insert/update/delete, conditions, joins, aggregation
+- [db & scan](docs/db-and-scan.md) — connections, transactions, row mapping
+- [Migrations & CLI](docs/migrations.md) — the `grain` CLI, generation, apply/rollback/status
+- [Tutorials](docs/tutorials/) — getting started, relationships
+
+### Usage Example
 
 ```go
 import "grain/schema"
