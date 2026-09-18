@@ -2,7 +2,9 @@ package migrate
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,7 +22,22 @@ type MigrationFile struct {
 	NoTxUpSQL   string
 	NoTxDownSQL string
 	Path        string
+	Checksum    string
 }
+
+type MigrationStatus struct {
+	MigrationFile
+	Applied          bool
+	ChecksumVerified bool
+}
+
+type migrationExecutor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	BeginTx(context.Context, *sql.TxOptions) (*sql.Tx, error)
+}
+
+const migrationLockID int64 = 675212221069
 
 var filenamePattern = regexp.MustCompile(`^(\d+)_(.+)\.sql$`)
 
@@ -47,11 +64,13 @@ func LoadMigrations(dir string) ([]MigrationFile, error) {
 		if err != nil {
 			return nil, err
 		}
+		digest := sha256.Sum256(raw)
 		up, down, noTxUp, noTxDown := splitMigration(string(raw))
 		files = append(files, MigrationFile{
 			Version: version, Name: m[2], UpSQL: up, DownSQL: down,
 			NoTxUpSQL: noTxUp, NoTxDownSQL: noTxDown,
-			Path: filepath.Join(dir, e.Name()),
+			Path:     filepath.Join(dir, e.Name()),
+			Checksum: hex.EncodeToString(digest[:]),
 		})
 	}
 
@@ -101,66 +120,100 @@ func migrationSection(line string) (string, bool) {
 	}
 }
 
-func ensureMigrationsTable(ctx context.Context, dbConn *sql.DB) error {
+func ensureMigrationsTable(ctx context.Context, dbConn migrationExecutor) error {
 	_, err := dbConn.ExecContext(ctx, `
 		CREATE SCHEMA IF NOT EXISTS grain;
 		CREATE TABLE IF NOT EXISTS grain.schema_migrations (
 			version    BIGINT PRIMARY KEY,
 			name       TEXT NOT NULL,
-			applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-		)`)
+			applied_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+			checksum   TEXT NOT NULL DEFAULT ''
+		);
+		ALTER TABLE grain.schema_migrations ADD COLUMN IF NOT EXISTS checksum TEXT NOT NULL DEFAULT ''`)
 	return err
 }
 
-func appliedVersions(ctx context.Context, dbConn *sql.DB) (map[int64]bool, error) {
-	rows, err := dbConn.QueryContext(ctx, `SELECT version FROM grain.schema_migrations`)
+func appliedChecksums(ctx context.Context, dbConn migrationExecutor) (map[int64]string, error) {
+	rows, err := dbConn.QueryContext(ctx, `SELECT version, checksum FROM grain.schema_migrations`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	applied := map[int64]bool{}
+	applied := map[int64]string{}
 	for rows.Next() {
 		var v int64
-		if err := rows.Scan(&v); err != nil {
+		var checksum string
+		if err := rows.Scan(&v, &checksum); err != nil {
 			return nil, err
 		}
-		applied[v] = true
+		applied[v] = checksum
 	}
 	return applied, rows.Err()
 }
 
 func Apply(ctx context.Context, dbConn *sql.DB, dir string) error {
-	if err := ensureMigrationsTable(ctx, dbConn); err != nil {
-		return err
-	}
 	files, err := LoadMigrations(dir)
 	if err != nil {
 		return err
 	}
-	applied, err := appliedVersions(ctx, dbConn)
-	if err != nil {
-		return err
-	}
-
-	for _, f := range files {
-		if applied[f.Version] {
-			continue
+	return withMigrationLock(ctx, dbConn, func(conn *sql.Conn) error {
+		if err := ensureMigrationsTable(ctx, conn); err != nil {
+			return err
 		}
-		// PostgreSQL requires some statements (notably ALTER TYPE ... ADD VALUE)
-		// to be committed before the transactional migration can use their result.
-		if err := runOutsideTx(ctx, dbConn, f.NoTxUpSQL); err != nil {
-			return fmt.Errorf("migration %d_%s no-transaction up failed: %w", f.Version, f.Name, err)
+		applied, err := appliedChecksums(ctx, conn)
+		if err != nil {
+			return err
 		}
-		if err := runInTx(ctx, dbConn, f.UpSQL, f.Version, f.Name); err != nil {
-			return fmt.Errorf("migration %d_%s failed: %w", f.Version, f.Name, err)
+		if err := verifyAndBackfillChecksums(ctx, conn, files, applied); err != nil {
+			return err
 		}
-		fmt.Printf("applied %d_%s\n", f.Version, f.Name)
-	}
-	return nil
+		for _, f := range files {
+			if _, ok := applied[f.Version]; ok {
+				continue
+			}
+			// PostgreSQL requires some statements (notably ALTER TYPE ... ADD VALUE)
+			// to be committed before the transactional migration can use their result.
+			if err := runOutsideTx(ctx, conn, f.NoTxUpSQL); err != nil {
+				return fmt.Errorf("migration %d_%s no-transaction up failed: %w", f.Version, f.Name, err)
+			}
+			if err := runInTx(ctx, conn, f.UpSQL, f.Version, f.Name, f.Checksum); err != nil {
+				return fmt.Errorf("migration %d_%s failed: %w", f.Version, f.Name, err)
+			}
+			fmt.Printf("applied %d_%s\n", f.Version, f.Name)
+		}
+		return nil
+	})
 }
 
-func runOutsideTx(ctx context.Context, dbConn *sql.DB, sqlText string) error {
+func Status(ctx context.Context, dbConn *sql.DB, dir string) ([]MigrationStatus, error) {
+	files, err := LoadMigrations(dir)
+	if err != nil {
+		return nil, err
+	}
+	var statuses []MigrationStatus
+	err = withMigrationLock(ctx, dbConn, func(conn *sql.Conn) error {
+		if err := ensureMigrationsTable(ctx, conn); err != nil {
+			return err
+		}
+		applied, err := appliedChecksums(ctx, conn)
+		if err != nil {
+			return err
+		}
+		for _, file := range files {
+			recorded, isApplied := applied[file.Version]
+			statuses = append(statuses, MigrationStatus{
+				MigrationFile:    file,
+				Applied:          isApplied,
+				ChecksumVerified: !isApplied || recorded == file.Checksum,
+			})
+		}
+		return nil
+	})
+	return statuses, err
+}
+
+func runOutsideTx(ctx context.Context, dbConn migrationExecutor, sqlText string) error {
 	if !hasExecutableSQL(sqlText) {
 		return nil
 	}
@@ -168,7 +221,7 @@ func runOutsideTx(ctx context.Context, dbConn *sql.DB, sqlText string) error {
 	return err
 }
 
-func runInTx(ctx context.Context, dbConn *sql.DB, sqlText string, version int64, name string) error {
+func runInTx(ctx context.Context, dbConn migrationExecutor, sqlText string, version int64, name, checksum string) error {
 	tx, err := dbConn.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -180,7 +233,7 @@ func runInTx(ctx context.Context, dbConn *sql.DB, sqlText string, version int64,
 		}
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO grain.schema_migrations (version, name) VALUES ($1, $2)`, version, name,
+		`INSERT INTO grain.schema_migrations (version, name, checksum) VALUES ($1, $2, $3)`, version, name, checksum,
 	); err != nil {
 		_ = tx.Rollback()
 		return err
@@ -193,47 +246,81 @@ func RollbackLast(ctx context.Context, dbConn *sql.DB, dir string) error {
 	if err != nil {
 		return err
 	}
-	applied, err := appliedVersions(ctx, dbConn)
-	if err != nil {
-		return err
-	}
-
-	var last *MigrationFile
-	for i := len(files) - 1; i >= 0; i-- {
-		if applied[files[i].Version] {
-			last = &files[i]
-			break
+	return withMigrationLock(ctx, dbConn, func(conn *sql.Conn) error {
+		if err := ensureMigrationsTable(ctx, conn); err != nil {
+			return err
 		}
-	}
-	if last == nil {
-		return fmt.Errorf("no applied migrations to roll back")
-	}
-	if !hasExecutableSQL(last.DownSQL) && !hasExecutableSQL(last.NoTxDownSQL) {
-		return fmt.Errorf("migration %d_%s is irreversible: no executable down migration", last.Version, last.Name)
-	}
-	// Run the no-transaction down section first: an index must be dropped before
-	// a transactional table drop, and any retry must use idempotent SQL here.
-	if err := runOutsideTx(ctx, dbConn, last.NoTxDownSQL); err != nil {
-		return fmt.Errorf("migration %d_%s no-transaction down failed: %w", last.Version, last.Name, err)
-	}
-
-	tx, err := dbConn.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	if hasExecutableSQL(last.DownSQL) {
-		if _, err := tx.ExecContext(ctx, last.DownSQL); err != nil {
+		applied, err := appliedChecksums(ctx, conn)
+		if err != nil {
+			return err
+		}
+		if err := verifyAndBackfillChecksums(ctx, conn, files, applied); err != nil {
+			return err
+		}
+		var last *MigrationFile
+		for i := len(files) - 1; i >= 0; i-- {
+			if _, ok := applied[files[i].Version]; ok {
+				last = &files[i]
+				break
+			}
+		}
+		if last == nil {
+			return fmt.Errorf("no applied migrations to roll back")
+		}
+		if !hasExecutableSQL(last.DownSQL) && !hasExecutableSQL(last.NoTxDownSQL) {
+			return fmt.Errorf("migration %d_%s is irreversible: no executable down migration", last.Version, last.Name)
+		}
+		if err := runOutsideTx(ctx, conn, last.NoTxDownSQL); err != nil {
+			return fmt.Errorf("migration %d_%s no-transaction down failed: %w", last.Version, last.Name, err)
+		}
+		tx, err := conn.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		if hasExecutableSQL(last.DownSQL) {
+			if _, err := tx.ExecContext(ctx, last.DownSQL); err != nil {
+				_ = tx.Rollback()
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM grain.schema_migrations WHERE version = $1`, last.Version); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
-	}
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM grain.schema_migrations WHERE version = $1`, last.Version,
-	); err != nil {
-		_ = tx.Rollback()
+		return tx.Commit()
+	})
+}
+
+func withMigrationLock(ctx context.Context, dbConn *sql.DB, fn func(*sql.Conn) error) error {
+	conn, err := dbConn.Conn(ctx)
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, migrationLockID); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	defer conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, migrationLockID)
+	return fn(conn)
+}
+
+func verifyAndBackfillChecksums(ctx context.Context, dbConn migrationExecutor, files []MigrationFile, applied map[int64]string) error {
+	for _, file := range files {
+		recorded, ok := applied[file.Version]
+		if !ok {
+			continue
+		}
+		if recorded == "" {
+			if _, err := dbConn.ExecContext(ctx, `UPDATE grain.schema_migrations SET checksum = $2 WHERE version = $1 AND checksum = ''`, file.Version, file.Checksum); err != nil {
+				return err
+			}
+			continue
+		}
+		if recorded != file.Checksum {
+			return fmt.Errorf("migration %d_%s checksum does not match the applied migration", file.Version, file.Name)
+		}
+	}
+	return nil
 }
 
 func hasExecutableSQL(sqlText string) bool {
