@@ -43,7 +43,7 @@ the migration generator can load them.
 ```go
 package schema
 
-import "grain/schema"
+import "github.com/etornam45/grain/schema"
 
 var UserStatus = schema.Enum("user_status", "active", "suspended", "banned")
 
@@ -106,7 +106,7 @@ Check the state at any time with `grain migrate status`.
 
 ## 4. Connect
 
-`grain/db` wraps `database/sql`. Registering the pgx stdlib driver lets you
+`github.com/etornam45/grain/db` wraps `database/sql`. Registering the pgx stdlib driver lets you
 open with `db.Open("pgx", dsn)`:
 
 ```go
@@ -119,8 +119,8 @@ import (
 
     _ "github.com/jackc/pgx/v5/stdlib"
 
-    "grain/db"
-    "grain/query"
+    "github.com/etornam45/grain/db"
+    "github.com/etornam45/grain/query"
     "shop/internal/schema"
 )
 

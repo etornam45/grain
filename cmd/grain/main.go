@@ -7,8 +7,8 @@ import (
 	"os"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
-	"grain/db"
-	"grain/migrate"
+	"github.com/etornam45/grain/db"
+	"github.com/etornam45/grain/migrate"
 )
 
 func main() {

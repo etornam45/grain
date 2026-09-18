@@ -3,7 +3,7 @@ package query
 import (
 	"testing"
 
-	"grain/schema"
+	"github.com/etornam45/grain/schema"
 )
 
 func TestSelectOrderByRendersValidSeparatedClauses(t *testing.T) {
