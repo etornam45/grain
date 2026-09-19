@@ -21,14 +21,14 @@ type activeUser struct {
 }
 
 users, err := query.Select[activeUser](
-    schema.Users.Cols.ID,
-    schema.Users.Cols.Name,
-    schema.Users.Cols.Email,
-    schema.Users.Cols.Status,
+    schema.Users.Col("id"),
+    schema.Users.Col("name"),
+    schema.Users.Col("email"),
+    schema.Users.Col("status"),
 ).
     From(schema.Users).
-    Where(query.Eq(schema.Users.Cols.Status, "active")).
-    OrderBy([]string{schema.Users.Cols.Name.Str()}, query.Asc).
+    Where(query.Eq(schema.Users.Col("status"), "active")).
+    OrderBy([]string{schema.Users.Col("name").Str()}, query.Asc).
     Limit(10).
     All(ctx, conn)
 ```
@@ -45,12 +45,12 @@ queries).
 
 ```go
 rows, err := query.Select[userOrderRow](
-    schema.Users.Cols.Name,
-    schema.Orders.Cols.Total,
+    schema.Users.Col("name"),
+    schema.Orders.Col("total"),
 ).
     From(schema.Users).
-    InnerJoin(schema.Orders, query.Eq(schema.Users.Cols.ID, schema.Orders.Cols.UserID)).
-    Where(query.Gt(schema.Orders.Cols.Total, 100)).
+    InnerJoin(schema.Orders, query.Eq(schema.Users.Col("id"), schema.Orders.Col("user_id"))).
+    Where(query.Gt(schema.Orders.Col("total"), 100)).
     All(ctx, conn)
 ```
 
@@ -68,10 +68,10 @@ result columns against struct `db:` tags — see [scan](db-and-scan.md).
 ### Grouping and filtering groups
 
 ```go
-query.Select[countRow](schema.Users.Cols.Status).
+query.Select[countRow](schema.Users.Col("status")).
     From(schema.Users).
-    GroupBy(schema.Users.Cols.Status.String()).
-    Having(query.Gt(schema.Users.Cols.ID, 5)).
+    GroupBy(schema.Users.Col("status").String()).
+    Having(query.Gt(schema.Users.Col("id"), 5)).
     All(ctx, conn)
 ```
 
@@ -83,8 +83,8 @@ query.Select[countRow](schema.Users.Cols.Status).
 ```go
 query.Select[User](...).
     From(schema.Users).
-    OrderBy([]string{schema.Users.Cols.Name.String()}, query.Asc).
-    OrderBy([]string{schema.Users.Cols.ID.String()}, query.Desc).
+    OrderBy([]string{schema.Users.Col("name").String()}, query.Asc).
+    OrderBy([]string{schema.Users.Col("id").String()}, query.Desc).
     Limit(10).
     Offset(20).
     All(ctx, conn)
@@ -97,7 +97,7 @@ query.Select[User](...).
 ### Distinct
 
 ```go
-query.Select[User](schema.Users.Cols.Name).Distinct().From(schema.Users)
+query.Select[User](schema.Users.Col("name")).Distinct().From(schema.Users)
 ```
 
 ### Executing
@@ -156,10 +156,10 @@ Conditions can be nested arbitrarily:
 ```go
 query.And(
     query.Or(
-        query.Eq(schema.Users.Cols.Status, "active"),
-        query.Eq(schema.Users.Cols.Status, "suspended"),
+        query.Eq(schema.Users.Col("status"), "active"),
+        query.Eq(schema.Users.Col("status"), "suspended"),
     ),
-    query.Gt(schema.Orders.Cols.Total, 0),
+    query.Gt(schema.Orders.Col("total"), 0),
 )
 ```
 
@@ -195,7 +195,7 @@ Capture a generated key:
 var id string
 err := query.Insert(schema.Users).
     Values(map[string]any{"name": "Ama"}).
-    Returning(schema.Users.Cols.ID.String()).
+    Returning(schema.Users.Col("id").String()).
     Scan(ctx, conn, &id)
 ```
 
@@ -224,7 +224,7 @@ err := query.Insert(schema.Users).
 ```go
 n, err := query.Update(schema.Users).
     Set(map[string]any{"status": "banned"}).
-    Where(query.Eq(schema.Users.Cols.Email, "ama@example.com")).
+    Where(query.Eq(schema.Users.Col("email"), "ama@example.com")).
     Run(ctx, conn)
 ```
 
@@ -241,7 +241,7 @@ n, err := query.Update(schema.Users).
 
 ```go
 n, err := query.Delete(schema.Orders).
-    Where(query.Eq(schema.Orders.Cols.UserID, id)).
+    Where(query.Eq(schema.Orders.Col("user_id"), id)).
     Run(ctx, conn)
 ```
 
