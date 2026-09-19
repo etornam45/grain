@@ -10,7 +10,7 @@ func TestDeleteAndReturningSQL(t *testing.T) {
 	users := getTestTable()
 
 	sql, args := Delete(users).
-		Where(Eq(users.Cols.ID, 1)).
+		Where(Eq(users.Col("id"), 1)).
 		Returning("id").
 		SQL()
 
@@ -28,7 +28,7 @@ func TestDeleteRun(t *testing.T) {
 	users := getTestTable()
 	exec := &dummyExecutor{}
 
-	rows, err := Delete(users).Where(Eq(users.Cols.ID, 1)).Run(ctx, exec)
+	rows, err := Delete(users).Where(Eq(users.Col("id"), 1)).Run(ctx, exec)
 	if err != nil || rows != 1 {
 		t.Fatalf("Delete.Run err: %v, rows: %d", err, rows)
 	}
@@ -36,4 +36,3 @@ func TestDeleteRun(t *testing.T) {
 		t.Errorf("got delete query %q", exec.lastQuery)
 	}
 }
-

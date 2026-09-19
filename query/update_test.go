@@ -13,7 +13,7 @@ func TestUpdateAndReturningSQL(t *testing.T) {
 
 	sql, args := Update(users).
 		Set(map[string]any{"name": "UpdatedName"}).
-		Where(Eq(users.Cols.ID, 1)).
+		Where(Eq(users.Col("id"), 1)).
 		Returning("id", "name").
 		SQL()
 
@@ -28,7 +28,7 @@ func TestUpdateAndReturningSQL(t *testing.T) {
 
 func TestUpdateSortMapKeys(t *testing.T) {
 	type columns struct{ ID *schema.ColumnDef }
-	users := schema.Table[columns]("query_map_users", schema.Column("id", schema.Int()))
+	users := schema.Table("query_map_users", schema.Column("id", schema.Int()))
 
 	updateSQL, updateArgs := Update(users).Set(map[string]any{"z": 1, "a": 2}).SQL()
 	if updateSQL != "UPDATE query_map_users SET a = $1, z = $2" {
@@ -44,7 +44,7 @@ func TestUpdateRun(t *testing.T) {
 	users := getTestTable()
 	exec := &dummyExecutor{}
 
-	rows, err := Update(users).Set(map[string]any{"name": "Ama"}).Where(Eq(users.Cols.ID, 1)).Run(ctx, exec)
+	rows, err := Update(users).Set(map[string]any{"name": "Ama"}).Where(Eq(users.Col("id"), 1)).Run(ctx, exec)
 	if err != nil || rows != 1 {
 		t.Fatalf("Update.Run err: %v, rows: %d", err, rows)
 	}

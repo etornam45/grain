@@ -9,7 +9,7 @@ func TestInAndNotInConditions(t *testing.T) {
 	users := getTestTable()
 
 	// In with variadic values
-	cond := In(users.Cols.ID, 1, 2, 3)
+	cond := In(users.Col("id"), 1, 2, 3)
 	sql, args := cond.SQL(1)
 	if sql != "users.id IN ($1, $2, $3)" {
 		t.Errorf("got sql %q, want %q", sql, "users.id IN ($1, $2, $3)")
@@ -19,7 +19,7 @@ func TestInAndNotInConditions(t *testing.T) {
 	}
 
 	// In with slice
-	condSlice := In(users.Cols.Name, []string{"Alice", "Bob"})
+	condSlice := In(users.Col("name"), []string{"Alice", "Bob"})
 	sql, args = condSlice.SQL(3)
 	if sql != "users.name IN ($3, $4)" {
 		t.Errorf("got sql %q, want %q", sql, "users.name IN ($3, $4)")
@@ -29,7 +29,7 @@ func TestInAndNotInConditions(t *testing.T) {
 	}
 
 	// In with empty slice -> 1 = 0
-	condEmpty := In(users.Cols.ID, []int{})
+	condEmpty := In(users.Col("id"), []int{})
 	sql, args = condEmpty.SQL(1)
 	if sql != "1 = 0" {
 		t.Errorf("got sql %q, want %q", sql, "1 = 0")
@@ -39,7 +39,7 @@ func TestInAndNotInConditions(t *testing.T) {
 	}
 
 	// NotIn with variadic
-	condNotIn := NotIn(users.Cols.ID, 4, 5)
+	condNotIn := NotIn(users.Col("id"), 4, 5)
 	sql, args = condNotIn.SQL(1)
 	if sql != "users.id NOT IN ($1, $2)" {
 		t.Errorf("got sql %q, want %q", sql, "users.id NOT IN ($1, $2)")
@@ -49,7 +49,7 @@ func TestInAndNotInConditions(t *testing.T) {
 	}
 
 	// NotIn with empty slice -> 1 = 1
-	condNotInEmpty := NotIn(users.Cols.ID, []int{})
+	condNotInEmpty := NotIn(users.Col("id"), []int{})
 	sql, args = condNotInEmpty.SQL(1)
 	if sql != "1 = 1" {
 		t.Errorf("got sql %q, want %q", sql, "1 = 1")
@@ -86,13 +86,13 @@ func TestComparisonAndLogicalConditions(t *testing.T) {
 
 	// Test Neq, Lt, Lte, Like, ILike, IsNull, Or, Not
 	cond := Or(
-		Neq(users.Cols.Name, "Ama"),
-		Lt(users.Cols.Age, 18),
-		Lte(users.Cols.Age, 65),
-		Like(users.Cols.Email, "%@gmail.com"),
-		ILike(users.Cols.Name, "a%"),
-		IsNull(users.Cols.Age),
-		Not(Eq(users.Cols.ID, 99)),
+		Neq(users.Col("name"), "Ama"),
+		Lt(users.Col("age"), 18),
+		Lte(users.Col("age"), 65),
+		Like(users.Col("email"), "%@gmail.com"),
+		ILike(users.Col("name"), "a%"),
+		IsNull(users.Col("age")),
+		Not(Eq(users.Col("id"), 99)),
 	)
 	sqlCond, args := cond.SQL(1)
 	wantCondSQL := "(users.name <> $1 OR users.age < $2 OR users.age <= $3 OR users.email LIKE $4 OR users.name ILIKE $5 OR users.age IS NULL OR NOT (users.id = $6))"
@@ -103,4 +103,3 @@ func TestComparisonAndLogicalConditions(t *testing.T) {
 		t.Errorf("got %d args, want 6", len(args))
 	}
 }
-
