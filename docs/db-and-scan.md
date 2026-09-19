@@ -48,13 +48,13 @@ see [query.md](query.md).
 ```go
 err := conn.Transaction(ctx, func(tx *db.Tx) error {
     _, err := query.Delete(schema.Orders).
-        Where(query.Eq(schema.Orders.Cols.UserID, id)).
+        Where(query.Eq(schema.Orders.Col("user_id"), id)).
         Run(ctx, tx)
     if err != nil {
         return err
     }
     _, err = query.Delete(schema.Users).
-        Where(query.Eq(schema.Users.Cols.ID, id)).
+        Where(query.Eq(schema.Users.Col("id"), id)).
         Run(ctx, tx)
     return err
 })
