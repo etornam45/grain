@@ -12,22 +12,19 @@ Foreign keys go through `.References(col)` plus optional `.OnDelete`/`.OnUpdate`
 `internal/schema/schema.go`:
 
 ```go
-type ordersColumns struct {
-    ID, UserID, Total *schema.ColumnDef
-}
-
-var Orders = schema.Table[ordersColumns]("orders",
+var Orders = schema.Table("orders",
     schema.Column("id", schema.Serial()).PrimaryKey(),
     schema.Column("user_id", schema.UUID()).
         NotNull().
-        References(Users.Cols.ID).
+        References(Users.Col("id")).
         OnDelete(schema.Cascade),
     schema.Column("total", schema.Numeric(10, 2)).NotNull(),
 )
 ```
 
-`.References(Users.Cols.ID)` emits `FOREIGN KEY (user_id) REFERENCES users(id)`,
-and `.OnDelete(schema.Cascade)` adds `ON DELETE CASCADE`.
+`.References(Users.Col("id"))` emits
+`FOREIGN KEY (user_id) REFERENCES users(id)` and `.OnDelete(schema.Cascade)`
+adds `ON DELETE CASCADE`.
 
 Generate and apply:
 
@@ -70,7 +67,7 @@ err := conn.Transaction(ctx, func(tx *db.Tx) error {
             "email":  "kofi@example.com",
             "status": "active",
         }).
-        Returning(schema.Users.Cols.ID.String()).
+        Returning(schema.Users.Col("id").String()).
         Scan(ctx, tx, &userID); err != nil {
         return err
     }
@@ -81,7 +78,7 @@ err := conn.Transaction(ctx, func(tx *db.Tx) error {
             "user_id": userID,
             "total":   149.99,
         }).
-        Returning(schema.Orders.Cols.ID.String()).
+        Returning(schema.Orders.Col("id").String()).
         Scan(ctx, tx, &orderID); err != nil {
         return err
     }
@@ -108,15 +105,15 @@ type bigOrders struct {
 }
 
 rows, err := query.Select[bigOrders](
-    schema.Users.Cols.ID,
-    schema.Users.Cols.Name,
-    schema.Orders.Cols.ID,
-    schema.Orders.Cols.Total,
+    schema.Users.Col("id"),
+    schema.Users.Col("name"),
+    schema.Orders.Col("id"),
+    schema.Orders.Col("total"),
 ).
     From(schema.Users).
-    InnerJoin(schema.Orders, query.Eq(schema.Users.Cols.ID, schema.Orders.Cols.UserID)).
-    Where(query.Gt(schema.Orders.Cols.Total, 100)).
-    OrderBy([]string{schema.Orders.Cols.Total.String()}, query.Desc).
+    InnerJoin(schema.Orders, query.Eq(schema.Users.Col("id"), schema.Orders.Col("user_id"))).
+    Where(query.Gt(schema.Orders.Col("total"), 100)).
+    OrderBy([]string{schema.Orders.Col("total").String()}, query.Desc).
     All(ctx, conn)
 if err != nil {
     log.Fatal(err)
@@ -135,7 +132,7 @@ Joins compose with everything else: `LeftJoin`, `RightJoin`, `FullJoin`, and
 and returns a total as an `int64`:
 
 ```go
-total, err := query.Select[struct{}](schema.Orders.Cols.ID).
+total, err := query.Select[struct{}](schema.Orders.Col("id")).
     From(schema.Orders).
     Count(ctx, conn)
 if err != nil {
@@ -162,12 +159,12 @@ type statusCount struct {
 
 ```go
 byStatus, err := query.Select[statusCount](
-    schema.Users.Cols.Status,
+    schema.Users.Col("status"),
     rawCol("COUNT(orders.id) AS n"),
 ).
     From(schema.Orders).
-    InnerJoin(schema.Users, query.Eq(schema.Users.Cols.ID, schema.Orders.Cols.UserID)).
-    GroupBy(schema.Users.Cols.Status.String()).
+    InnerJoin(schema.Users, query.Eq(schema.Users.Col("id"), schema.Orders.Col("user_id"))).
+    GroupBy(schema.Users.Col("status").String()).
     All(ctx, conn)
 if err != nil {
     log.Fatal(err)
@@ -192,12 +189,12 @@ userID := "00000000-0000-0000-0000-000000000000" // the ID from step 2
 err = conn.Transaction(ctx, func(tx *db.Tx) error {
     // Explicitly remove orders first (defensive; CASCADE would handle it).
     if _, err := query.Delete(schema.Orders).
-        Where(query.Eq(schema.Orders.Cols.UserID, userID)).
+        Where(query.Eq(schema.Orders.Col("user_id"), userID)).
         Run(ctx, tx); err != nil {
         return err
     }
     if _, err := query.Delete(schema.Users).
-        Where(query.Eq(schema.Users.Cols.ID, userID)).
+        Where(query.Eq(schema.Users.Col("id"), userID)).
         Run(ctx, tx); err != nil {
         return err
     }

@@ -43,11 +43,7 @@ import "github.com/etornam45/grain/schema"
 
 var UserStatus = schema.Enum("user_status", "active", "suspended", "banned")
 
-type usersColumns struct {
-	ID, Name, Email, Age, Status *schema.ColumnDef
-}
-
-var Users = schema.Table[usersColumns]("users",
+var Users = schema.Table("users",
 	schema.Column("id", schema.UUID()).PrimaryKey().Default("gen_random_uuid()"),
 	schema.Column("name", schema.Varchar(255)).NotNull(),
 	schema.Column("email", schema.Varchar(255)).NotNull().Unique(),
@@ -96,7 +92,7 @@ err = query.Insert(schema.Users).
 		"email":  "ama@example.com",
 		"status": "active",
 	}).
-	Returning(schema.Users.Cols.ID.String()).
+	Returning(schema.Users.Col("id").String()).
 	Scan(ctx, conn, &newID)
 ```
 
@@ -110,10 +106,10 @@ type User struct {
 	Status string `db:"users.status"`
 }
 
-users, err := query.Select[User](schema.Users.Cols.ID, schema.Users.Cols.Name, schema.Users.Cols.Email, schema.Users.Cols.Status).
+users, err := query.Select[User](schema.Users.Col("id"), schema.Users.Col("name"), schema.Users.Col("email"), schema.Users.Col("status")).
 	From(schema.Users).
-	Where(query.Eq(schema.Users.Cols.Status, "active")).
-	OrderBy([]string{schema.Users.Cols.Name.Str()}, query.Asc).
+	Where(query.Eq(schema.Users.Col("status"), "active")).
+	OrderBy([]string{schema.Users.Col("name").Str()}, query.Asc).
 	Limit(10).
 	All(ctx, conn)
 ```
@@ -121,17 +117,17 @@ users, err := query.Select[User](schema.Users.Cols.ID, schema.Users.Cols.Name, s
 3. **Joins**
 
 ```go
-rows, err := query.Select[UserOrderRow](schema.Users.Cols.Name, schema.Orders.Cols.Total).
+rows, err := query.Select[UserOrderRow](schema.Users.Col("name"), schema.Orders.Col("total")).
 	From(schema.Users).
-	InnerJoin(schema.Orders, query.Eq(schema.Users.Cols.ID, schema.Orders.Cols.UserID)).
-	Where(query.Gt(schema.Orders.Cols.Total, 100)).
+	InnerJoin(schema.Orders, query.Eq(schema.Users.Col("id"), schema.Orders.Col("user_id"))).
+	Where(query.Gt(schema.Orders.Col("total"), 100)).
 	All(ctx, conn)
 ```
 
 4. **Deleting**
 
 ```go
-_, err = query.Delete(schema.Users).Where(query.Eq(schema.Users.Cols.ID, newID)).Run(ctx, tx)
+_, err = query.Delete(schema.Users).Where(query.Eq(schema.Users.Col("id"), newID)).Run(ctx, tx)
 ```
 
 5. **Transactions**
@@ -139,13 +135,13 @@ _, err = query.Delete(schema.Users).Where(query.Eq(schema.Users.Cols.ID, newID))
 ```go
 err = conn.Transaction(ctx, func(tx *db.Tx) error {
 	_, err := query.Delete(schema.Orders)
-		.Where(query.Eq(schema.Orders.Cols.UserID, newID))
+		.Where(query.Eq(schema.Orders.Col("user_id"), newID))
 		.Run(ctx, tx)
 	if err != nil {
 		return err
 	}
 	_, err = query.Delete(schema.Users)
-		.Where(query.Eq(schema.Users.Cols.ID, newID))
+		.Where(query.Eq(schema.Users.Col("id"), newID))
 		.Run(ctx, tx)
 	return err
 })

@@ -51,11 +51,7 @@ import "github.com/etornam45/grain/schema"
 
 var UserStatus = schema.Enum("user_status", "active", "suspended", "banned")
 
-type usersColumns struct {
-    ID, Name, Email, Age, Status *schema.ColumnDef
-}
-
-var Users = schema.Table[usersColumns]("users",
+var Users = schema.Table("users",
     schema.Column("id", schema.UUID()).PrimaryKey().DefaultExpr("gen_random_uuid()"),
     schema.Column("name", schema.Varchar(255)).NotNull(),
     schema.Column("email", schema.Varchar(255)).NotNull().Unique(),
@@ -66,8 +62,8 @@ var Users = schema.Table[usersColumns]("users",
 
 Key points:
 
-- `Table[T]("users", ...)` binds the struct fields to columns by
-  `snake_case(name)`: `ID` → `id`, `Name` → `name`, and so on.
+- `Table("users", ...)` binds whatever columns you pass; refer to them by name
+  with `Users.Col("email")` wherever a column is needed.
 - `.DefaultExpr("gen_random_uuid()")` emits the expression verbatim (no
   quoting); `.Default("active")` emits a quoted literal.
 - `schema.Enum` registers `user_status` so migrations can create the type.
@@ -156,7 +152,7 @@ err := query.Insert(schema.Users).
         "email":  "ama@example.com",
         "status": "active",
     }).
-    Returning(schema.Users.Cols.ID.String()).
+    Returning(schema.Users.Col("id").String()).
     Scan(ctx, conn, &newID)
 if err != nil {
     log.Fatal(err)
@@ -178,14 +174,14 @@ type User struct {
 }
 
 users, err := query.Select[User](
-    schema.Users.Cols.ID,
-    schema.Users.Cols.Name,
-    schema.Users.Cols.Email,
-    schema.Users.Cols.Status,
+    schema.Users.Col("id"),
+    schema.Users.Col("name"),
+    schema.Users.Col("email"),
+    schema.Users.Col("status"),
 ).
     From(schema.Users).
-    Where(query.Eq(schema.Users.Cols.Status, "active")).
-    OrderBy([]string{schema.Users.Cols.Name.String()}, query.Asc).
+    Where(query.Eq(schema.Users.Col("status"), "active")).
+    OrderBy([]string{schema.Users.Col("name").String()}, query.Asc).
     Limit(10).
     All(ctx, conn)
 if err != nil {
@@ -203,7 +199,7 @@ for _, u := range users {
 ```go
 n, err := query.Update(schema.Users).
     Set(map[string]any{"status": "suspended"}).
-    Where(query.Eq(schema.Users.Cols.ID, newID)).
+    Where(query.Eq(schema.Users.Col("id"), newID)).
     Run(ctx, conn)
 if err != nil {
     log.Fatal(err)
@@ -211,7 +207,7 @@ if err != nil {
 fmt.Println("updated", n, "user(s)")
 
 n, err = query.Delete(schema.Users).
-    Where(query.Eq(schema.Users.Cols.ID, newID)).
+    Where(query.Eq(schema.Users.Col("id"), newID)).
     Run(ctx, conn)
 if err != nil {
     log.Fatal(err)
@@ -221,15 +217,11 @@ fmt.Println("deleted", n, "user(s)")
 
 ## 8. Evolve the schema
 
-Migrations are generated, not hand-written. Add a column — both the struct
-field (for the bound columns) and its `schema.Column` — then regenerate:
+Migrations are generated, not hand-written. Add a column — just add its
+`schema.Column` to the table, then regenerate:
 
 ```go
-type usersColumns struct {
-    ID, Name, Email, Age, Status, LastSeen *schema.ColumnDef
-}
-
-var Users = schema.Table[usersColumns]("users",
+var Users = schema.Table("users",
     schema.Column("id", schema.UUID()).PrimaryKey().DefaultExpr("gen_random_uuid()"),
     schema.Column("name", schema.Varchar(255)).NotNull(),
     schema.Column("email", schema.Varchar(255)).NotNull().Unique(),
