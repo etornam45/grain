@@ -70,3 +70,8 @@ func (u *UpdateBuilder) Run(ctx context.Context, exec db.Executor) (int64, error
 	}
 	return res.RowsAffected()
 }
+
+func (u *UpdateBuilder) Scan(ctx context.Context, exec db.Executor, dest ...any) error {
+	sqlStr, args := u.SQL()
+	return exec.QueryRowContext(ctx, sqlStr, args...).Scan(dest...)
+}

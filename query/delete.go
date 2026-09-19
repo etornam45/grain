@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"fmt"
+
 	"github.com/etornam45/grain/db"
 )
 
@@ -50,4 +51,9 @@ func (d *DeleteBuilder) Run(ctx context.Context, exec db.Executor) (int64, error
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+func (d *DeleteBuilder) Scan(ctx context.Context, exec db.Executor, dest ...any) error {
+	sqlStr, args := d.SQL()
+	return exec.QueryRowContext(ctx, sqlStr, args...).Scan(dest...)
 }

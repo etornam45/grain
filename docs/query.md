@@ -129,6 +129,12 @@ at a given offset, so conditions compose anywhere in a query.
 | `Lte(col, v)`       | `col <= $n`                |
 | `Like(col, pattern)`| `col LIKE $n`              |
 | `ILike(col, pattern)`| `col ILIKE $n`            |
+| `In(col, vals...)`  | `col IN ($n, $n+1, ...)`   |
+| `NotIn(col, vals...)`| `col NOT IN ($n, ...)`    |
+| `Raw(sql, args...)` | Custom SQL expr (`?` bound) |
+
+> `In` and `NotIn` accept either variadic values (`query.In(col, 1, 2, 3)`) or Go slices (`query.In(col, ids)`).
+> Passing an empty slice safely renders `1 = 0` for `In` and `1 = 1` for `NotIn`.
 
 ### Null checks
 
@@ -174,7 +180,10 @@ generated SQL is deterministic and the placeholders line up with the values.
 
 | Method | Result |
 | ------ | ------ |
-| `Values(row map[string]any)` | Set the row (one call; replaces any prior values) |
+| `Values(rows ...map[string]any)` | Set one or more rows (batch inserts) |
+| `OnConflictDoNothing(targets ...string)` | `ON CONFLICT (targets) DO NOTHING` |
+| `OnConflictDoUpdate(targets []string, vals map[string]any)` | `ON CONFLICT (targets) DO UPDATE SET ...` |
+| `OnConflictExcluded(targets []string, cols ...string)` | `ON CONFLICT (targets) DO UPDATE SET col = EXCLUDED.col` |
 | `Returning(cols ...string)` | Appends `RETURNING <cols>` |
 | `Run(ctx, exec)` | Executes; returns `error` |
 | `Scan(ctx, exec, dest ...any)` | Executes and scans the `RETURNING` row into `dest` via `QueryRow` |
@@ -188,6 +197,26 @@ err := query.Insert(schema.Users).
     Values(map[string]any{"name": "Ama"}).
     Returning(schema.Users.Cols.ID.String()).
     Scan(ctx, conn, &id)
+```
+
+Batch insert multiple rows:
+
+```go
+err := query.Insert(schema.Users).
+    Values(
+        map[string]any{"name": "Ama", "email": "ama@example.com"},
+        map[string]any{"name": "Kofi", "email": "kofi@example.com"},
+    ).
+    Run(ctx, conn)
+```
+
+Upsert with `ON CONFLICT`:
+
+```go
+err := query.Insert(schema.Users).
+    Values(map[string]any{"email": "ama@example.com", "name": "Ama"}).
+    OnConflictDoUpdate([]string{"email"}, map[string]any{"name": "Ama Updated"}).
+    Run(ctx, conn)
 ```
 
 ## Update
@@ -205,6 +234,7 @@ n, err := query.Update(schema.Users).
 | `Where(c Condition)` | Filter; omit to update every row |
 | `Returning(cols ...string)` | Appends `RETURNING <cols>` |
 | `Run(ctx, exec)` | Executes; returns `(rowsAffected int64, error)` |
+| `Scan(ctx, exec, dest ...any)` | Executes and scans the single `RETURNING` row into `dest` |
 | `SQL()` | `(string, []any)` |
 
 ## Delete
@@ -220,6 +250,7 @@ n, err := query.Delete(schema.Orders).
 | `Where(c Condition)` | Filter; omit to delete every row |
 | `Returning(cols ...string)` | Appends `RETURNING <cols>` |
 | `Run(ctx, exec)` | Executes; returns `(rowsAffected int64, error)` |
+| `Scan(ctx, exec, dest ...any)` | Executes and scans the single `RETURNING` row into `dest` |
 | `SQL()` | `(string, []any)` |
 
 ## Running against connections and transactions
