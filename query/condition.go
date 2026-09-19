@@ -2,6 +2,7 @@ package query
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 )
 
@@ -20,6 +21,9 @@ type simpleCond struct {
 }
 
 func (c simpleCond) SQL(argOffset int) (string, []any) {
+	if r, ok := c.val.(colRef); ok {
+		return fmt.Sprintf("%s %s %s", c.left, c.op, r.String()), nil
+	}
 	return fmt.Sprintf("%s %s $%d", c.left, c.op, argOffset), []any{c.val}
 }
 
