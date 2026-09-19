@@ -40,17 +40,18 @@ func main() {
 			"email":  "ama@example.com",
 			"status": "active",
 		}).
-		Returning(schema.Users.Cols.ID.String()).
+		Returning(schema.Users.Col("id").String()).
 		Scan(ctx, conn, &newID)
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println("inserted user:", newID)
 
-	users, err := query.Select[User](schema.Users.Cols.ID, schema.Users.Cols.Name, schema.Users.Cols.Email, schema.Users.Cols.Status).
+	var u User
+	users, err := query.Select[User]().
 		From(schema.Users).
-		Where(query.Eq(schema.Users.Cols.Status, "active")).
-		OrderBy([]string {schema.Users.Cols.Name.Str()}, query.Asc).
+		Where(query.Eq(query.Ref(&u, &u.Status), "active")).
+		OrderBy([]string{schema.Users.Col("name").String()}, query.Asc).
 		Limit(10).
 		All(ctx, conn)
 	if err != nil {
@@ -58,10 +59,10 @@ func main() {
 	}
 	fmt.Println("active users:", users)
 
-	rows, err := query.Select[UserOrderRow](schema.Users.Cols.Name, schema.Orders.Cols.Total).
+	rows, err := query.Select[UserOrderRow]().
 		From(schema.Users).
-		InnerJoin(schema.Orders, query.Eq(schema.Users.Cols.ID, schema.Orders.Cols.UserID)).
-		Where(query.Gt(schema.Orders.Cols.Total, 100)).
+		InnerJoin(schema.Orders, query.Eq(schema.Users.Col("id"), schema.Orders.Col("user_id"))).
+		Where(query.Gt(schema.Orders.Col("total"), 100)).
 		All(ctx, conn)
 	if err != nil {
 		panic(err)
@@ -69,11 +70,11 @@ func main() {
 	fmt.Println("big orders:", rows)
 
 	err = conn.Transaction(ctx, func(tx *db.Tx) error {
-		_, err := query.Delete(schema.Orders).Where(query.Eq(schema.Orders.Cols.UserID, newID)).Run(ctx, tx)
+		_, err := query.Delete(schema.Orders).Where(query.Eq(schema.Orders.Col("user_id"), newID)).Run(ctx, tx)
 		if err != nil {
 			return err
 		}
-		_, err = query.Delete(schema.Users).Where(query.Eq(schema.Users.Cols.ID, newID)).Run(ctx, tx)
+		_, err = query.Delete(schema.Users).Where(query.Eq(schema.Users.Col("id"), newID)).Run(ctx, tx)
 		return err
 	})
 	if err != nil {
