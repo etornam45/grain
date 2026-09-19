@@ -8,22 +8,18 @@ import (
 )
 
 func TestSelectOrderByRendersValidSeparatedClauses(t *testing.T) {
-	type columns struct {
-		ID   *schema.ColumnDef
-		Name *schema.ColumnDef
-	}
-	users := schema.Table[columns]("query_order_users",
+	users := schema.Table("query_order_users",
 		schema.Column("id", schema.Int()),
 		schema.Column("name", schema.Text()),
 	)
 
-	sql, args := Select[struct{}](users.Cols.ID).
+	sql, args := Select[struct{}](users.Col("id")).
 		From(users).
-		OrderBy([]string{users.Cols.Name.String()}, Asc).
-		OrderBy([]string{users.Cols.ID.String()}, Desc).
+		OrderBy([]string{users.Col("name").String()}, Asc).
+		OrderBy([]string{users.Col("id").String()}, Desc).
 		SQL()
 
-	want := "SELECT query_order_users.id FROM query_order_users ORDER BY query_order_users.name ASC, query_order_users.id DESC"
+	want := `SELECT query_order_users.id AS "query_order_users.id" FROM query_order_users ORDER BY query_order_users.name ASC, query_order_users.id DESC`
 	if sql != want {
 		t.Fatalf("SQL() = %q, want %q", sql, want)
 	}
@@ -34,18 +30,17 @@ func TestSelectOrderByRendersValidSeparatedClauses(t *testing.T) {
 
 func TestSelectJoinsAndDistinct(t *testing.T) {
 	users := getTestTable()
-	type otherCols struct{ ID *schema.ColumnDef }
-	other := schema.Table[otherCols]("other", schema.Column("id", schema.Int()))
+	other := schema.Table("other", schema.Column("id", schema.Int()))
 
-	sql, _ := Select[struct{}](users.Cols.ID).
+	sql, _ := Select[struct{}](users.Col("id")).
 		From(users).
 		Distinct().
-		RightJoin(other, Eq(users.Cols.ID, other.Cols.ID)).
-		FullJoin(other, Eq(users.Cols.ID, other.Cols.ID)).
+		RightJoin(other, Eq(users.Col("id"), other.Col("id"))).
+		FullJoin(other, Eq(users.Col("id"), other.Col("id"))).
 		CrossJoin(other).
 		SQL()
 
-	wantJoinSQL := "SELECT DISTINCT users.id FROM users " +
+	wantJoinSQL := `SELECT DISTINCT users.id AS "users.id" FROM users ` +
 		"RIGHT JOIN other ON users.id = other.id " +
 		"FULL JOIN other ON users.id = other.id " +
 		"CROSS JOIN other"
@@ -57,34 +52,29 @@ func TestSelectJoinsAndDistinct(t *testing.T) {
 func TestComplexSelectQuery(t *testing.T) {
 	users := getTestTable()
 
-	type orderCols struct {
-		ID     *schema.ColumnDef
-		UserID *schema.ColumnDef
-		Total  *schema.ColumnDef
-	}
-	orders := schema.Table[orderCols]("orders",
+	orders := schema.Table("orders",
 		schema.Column("id", schema.Int()).PrimaryKey(),
 		schema.Column("user_id", schema.Int()),
 		schema.Column("total", schema.Int()),
 	)
 
-	sql, args := Select[struct{}](users.Cols.ID, users.Cols.Name).
+	sql, args := Select[struct{}](users.Col("id"), users.Col("name")).
 		From(users).
-		InnerJoin(orders, Eq(users.Cols.ID, orders.Cols.UserID)).
+		InnerJoin(orders, Eq(users.Col("id"), orders.Col("user_id"))).
 		Where(And(
-			In(users.Cols.Age, 20, 30, 40),
-			Gte(orders.Cols.Total, 100),
-			IsNotNull(users.Cols.Email),
+			In(users.Col("age"), 20, 30, 40),
+			Gte(orders.Col("total"), 100),
+			IsNotNull(users.Col("email")),
 			Raw("users.name != ?", "Excluded"),
 		)).
-		GroupBy(users.Cols.ID.String(), users.Cols.Name.String()).
-		Having(Gt(orders.Cols.Total, 50)).
-		OrderBy([]string{users.Cols.Name.String()}, Asc).
+		GroupBy(users.Col("id").String(), users.Col("name").String()).
+		Having(Gt(orders.Col("total"), 50)).
+		OrderBy([]string{users.Col("name").String()}, Asc).
 		Limit(10).
 		Offset(5).
 		SQL()
 
-	wantSQL := "SELECT users.id, users.name FROM users " +
+	wantSQL := `SELECT users.id AS "users.id", users.name AS "users.name" FROM users ` +
 		"INNER JOIN orders ON users.id = orders.user_id " +
 		"WHERE (users.age IN ($1, $2, $3) AND orders.total >= $4 AND users.email IS NOT NULL AND users.name != $5) " +
 		"GROUP BY users.id, users.name " +
@@ -102,3 +92,74 @@ func TestComplexSelectQuery(t *testing.T) {
 	}
 }
 
+func TestSelectAutoColumnsFromTags(t *testing.T) {
+	type User struct {
+		ID     string `db:"users.id"`
+		Name   string `db:"users.name"`
+		Status string `db:"users.status"`
+	}
+
+	users := schema.Table("users",
+		schema.Column("id", schema.UUID()),
+		schema.Column("name", schema.Text()),
+		schema.Column("status", schema.Text()),
+	)
+
+	sql, args := Select[User]().
+		From(users).
+		SQL()
+
+	wantSQL := `SELECT users.id AS "users.id", users.name AS "users.name", users.status AS "users.status" FROM users`
+	if sql != wantSQL {
+		t.Fatalf("got SQL %q\nwant %q", sql, wantSQL)
+	}
+	if len(args) != 0 {
+		t.Fatalf("got args %v, want none", args)
+	}
+}
+
+func TestSelectRefCondition(t *testing.T) {
+	type User struct {
+		ID     string `db:"users.id"`
+		Status string `db:"users.status"`
+	}
+
+	var u User
+	users := schema.Table("users",
+		schema.Column("id", schema.UUID()),
+		schema.Column("status", schema.Text()),
+	)
+
+	sql, args := Select[User]().
+		From(users).
+		Where(Eq(Ref(&u, &u.Status), "active")).
+		SQL()
+
+	wantSQL := `SELECT users.id AS "users.id", users.status AS "users.status" FROM users WHERE users.status = $1`
+	if sql != wantSQL {
+		t.Fatalf("got SQL %q\nwant %q", sql, wantSQL)
+	}
+	if !reflect.DeepEqual(args, []any{"active"}) {
+		t.Fatalf("got args %v", args)
+	}
+}
+
+func TestSelectJoinAmbiguousColumnAliasing(t *testing.T) {
+	type UserOrderRow struct {
+		UserID  string `db:"users.id"`
+		OrderID string `db:"orders.id"`
+	}
+
+	users := schema.Table("users", schema.Column("id", schema.UUID()))
+	orders := schema.Table("orders", schema.Column("id", schema.Int()))
+
+	sql, _ := Select[UserOrderRow]().
+		From(users).
+		InnerJoin(orders, Eq(users.Col("id"), orders.Col("id"))).
+		SQL()
+
+	wantSQL := `SELECT users.id AS "users.id", orders.id AS "orders.id" FROM users INNER JOIN orders ON users.id = orders.id`
+	if sql != wantSQL {
+		t.Fatalf("got SQL %q\nwant %q", sql, wantSQL)
+	}
+}

@@ -27,8 +27,7 @@ func TestInsertBatch(t *testing.T) {
 }
 
 func TestInsertSortMapKeys(t *testing.T) {
-	type columns struct{ ID *schema.ColumnDef }
-	users := schema.Table[columns]("query_map_users", schema.Column("id", schema.Int()))
+	users := schema.Table("query_map_users", schema.Column("id", schema.Int()))
 
 	insertSQL, insertArgs := Insert(users).Values(map[string]any{"z": 1, "a": 2}).SQL()
 	if insertSQL != "INSERT INTO query_map_users (a, z) VALUES ($1, $2)" {
@@ -104,4 +103,3 @@ func TestInsertRun(t *testing.T) {
 		t.Errorf("got insert query %q", exec.lastQuery)
 	}
 }
-
