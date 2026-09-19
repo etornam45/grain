@@ -4,17 +4,10 @@ import (
 	"testing"
 )
 
-type userCols struct {
-	ID        *ColumnDef
-	FirstName *ColumnDef
-	Email     *ColumnDef
-	Role      *ColumnDef
-}
-
 func TestTableAndColumns(t *testing.T) {
 	statusEnum := Enum("user_role", "admin", "member")
 
-	users := Table[userCols]("users",
+	users := Table("users",
 		Column("id", UUID()).PrimaryKey().Default("gen_random_uuid()"),
 		Column("first_name", Varchar(100)).NotNull(),
 		Column("email", Text()).Unique().Index(),
@@ -27,19 +20,19 @@ func TestTableAndColumns(t *testing.T) {
 	if len(users.Columns()) != 4 {
 		t.Errorf("got %d columns, want 4", len(users.Columns()))
 	}
-	if users.Cols.ID == nil || users.Cols.ID.Name != "id" {
-		t.Errorf("users.Cols.ID not bound properly")
+	if users.Col("id") == nil || users.Col("id").Name != "id" {
+		t.Errorf("users.Col(\"id\") not found or invalid")
 	}
-	if !users.Cols.ID.IsPK {
+	if !users.Col("id").IsPK {
 		t.Errorf("expected ID to be primary key")
 	}
-	if users.Cols.FirstName == nil || users.Cols.FirstName.Name != "first_name" {
-		t.Errorf("users.Cols.FirstName not bound properly (snake_case conversion)")
+	if users.Col("first_name") == nil || users.Col("first_name").Name != "first_name" {
+		t.Errorf("users.Col(\"first_name\") not found or invalid")
 	}
-	if !users.Cols.FirstName.IsNotNull {
+	if !users.Col("first_name").IsNotNull {
 		t.Errorf("expected first_name to be not null")
 	}
-	if users.Cols.Email == nil || !users.Cols.Email.IsUnique {
+	if users.Col("email") == nil || !users.Col("email").IsUnique {
 		t.Errorf("expected email to be unique")
 	}
 	if len(users.GetIndices()) != 1 {
@@ -71,4 +64,3 @@ func TestColumnReferences(t *testing.T) {
 		t.Errorf("expected SetNull on update")
 	}
 }
-

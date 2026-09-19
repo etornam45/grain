@@ -3,9 +3,11 @@ package query
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"strings"
+
 	"github.com/etornam45/grain/db"
 	"github.com/etornam45/grain/scan"
-	"strings"
 )
 
 type OrderDir string
@@ -55,10 +57,51 @@ type SelectBuilder[T any] struct {
 
 func Select[T any](cols ...colRef) *SelectBuilder[T] {
 	var names []string
-	for _, c := range cols {
-		names = append(names, c.String())
+	if len(cols) > 0 {
+		for _, c := range cols {
+			names = append(names, c.String())
+		}
+	} else {
+		var zero T
+		names = extractTags(reflect.TypeOf(zero))
 	}
 	return &SelectBuilder[T]{columns: names}
+}
+
+func extractTags(typ reflect.Type) []string {
+	if typ == nil {
+		return nil
+	}
+	if typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	if typ.Kind() != reflect.Struct {
+		return nil
+	}
+	var tags []string
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		if f.Anonymous && f.Type.Kind() == reflect.Struct {
+			tags = append(tags, extractTags(f.Type)...)
+			continue
+		}
+		tag := f.Tag.Get("db")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		if idx := strings.IndexByte(tag, ','); idx != -1 {
+			tag = tag[:idx]
+		}
+		tags = append(tags, tag)
+	}
+	return tags
+}
+
+func formatSelectCol(col string) string {
+	if col == "*" || strings.Contains(strings.ToUpper(col), " AS ") || strings.Contains(col, "(") {
+		return col
+	}
+	return fmt.Sprintf(`%s AS "%s"`, col, col)
 }
 
 func (q *SelectBuilder[T]) Distinct() *SelectBuilder[T] { q.distinct = true; return q }
@@ -106,6 +149,11 @@ func (q *SelectBuilder[T]) SQL() (string, []any) {
 	cols := "*"
 	if len(q.columns) > 0 {
 		cols = strings.Join(q.columns, ", ")
+		formatted := make([]string, len(q.columns))
+		for i, c := range q.columns {
+			formatted[i] = formatSelectCol(c)
+		}
+		cols = strings.Join(formatted, ", ")
 	}
 
 	var b strings.Builder
