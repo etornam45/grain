@@ -7,15 +7,8 @@ import (
 	"github.com/etornam45/grain/schema"
 )
 
-type testCols struct {
-	ID    *schema.ColumnDef
-	Name  *schema.ColumnDef
-	Email *schema.ColumnDef
-	Age   *schema.ColumnDef
-}
-
-func getTestTable() *schema.TableDef[testCols] {
-	return schema.Table[testCols]("users",
+func getTestTable() *schema.TableDef {
+	return schema.Table("users",
 		schema.Column("id", schema.Int()).PrimaryKey(),
 		schema.Column("name", schema.Varchar(255)),
 		schema.Column("email", schema.Varchar(255)),
@@ -52,4 +45,3 @@ func (d *dummyExecutor) QueryRowContext(ctx context.Context, query string, args 
 	d.lastArgs = args
 	return nil
 }
-
