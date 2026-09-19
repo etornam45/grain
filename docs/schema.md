@@ -7,21 +7,17 @@ scanning) consumes.
 A schema file is a normal Go file — usually grouped under a `schema` package so
 the migration generator can load it.
 
-## Tables and column binds
+## Tables
 
-A table is declared with a struct whose fields are all `*schema.ColumnDef`.
-`schema.Table[T](name, columns...)` binds those fields to the columns you pass.
-The binding is done **by name**: the Go field name is converted to `snake_case`
-and looked up against the declared column names.
+A table is declared with `schema.Table(name, columns...)`. It returns a
+`*TableDef` whose columns can be accessed by name via `.Col("name")`. The
+binding is done **by name**: the column's declared name is what you use
+everywhere else (queries, conditions, foreign keys).
 
 ```go
 import "github.com/etornam45/grain/schema"
 
-type usersColumns struct {
-    ID, Name, Email, Age, Status *schema.ColumnDef
-}
-
-var Users = schema.Table[usersColumns]("users",
+var Users = schema.Table("users",
     schema.Column("id", schema.UUID()).PrimaryKey().Default("gen_random_uuid()"),
     schema.Column("name", schema.Varchar(255)).NotNull(),
     schema.Column("email", schema.Varchar(255)).NotNull().Unique(),
@@ -30,12 +26,16 @@ var Users = schema.Table[usersColumns]("users",
 )
 ```
 
-Field `ID` → column `id`, `Name` → `name`, `Email` → `email`, and so on. The
-bind fails at startup (panics) if a struct field has no matching column — this
-catches a mismatch between your Go view and your table definition immediately.
+Each column is a `*schema.ColumnDef` that you can use in queries and
+migrations. Columns are accessible by name:
 
-The bound columns are available as `Users.Cols.ID`, and each one is a
-`*schema.ColumnDef` that you can use in queries and migrations.
+```go
+Users.Col("id")    // *schema.ColumnDef — panics if name not found
+Users.Col("email") // used for foreign keys, conditions, etc.
+```
+
+A column whose name doesn't exist panics at startup — this catches typos
+between your Go view and your table definition immediately.
 
 ## Column types
 
@@ -129,7 +129,7 @@ const (
 ```go
 schema.Column("user_id", schema.UUID()).
     NotNull().
-    References(Users.Cols.ID).
+    References(Users.Col("id")).
     OnDelete(schema.Cascade)
 ```
 
@@ -139,7 +139,7 @@ The `.Index()` column modifier creates an index `idx_<table>_<column>`. For
 composite indexes, use the table-level `Index`:
 
 ```go
-var Product = schema.Table[ProductColums]("product",
+var Product = schema.Table("product",
     schema.Column("id", schema.UUID()).PrimaryKey().NotNull(),
     schema.Column("name", schema.Varchar(225)).NotNull().Index(),
     schema.Column("price", schema.Numeric(10, 2)).NotNull(),
@@ -150,7 +150,7 @@ var Product = schema.Table[ProductColums]("product",
 ```
 
 ```go
-func (t *TableDef[T]) Index(name string, cols ...string) *TableDef[T]
+func (t *TableDef) Index(name string, cols ...string) *TableDef
 ```
 
 ## Inspecting tables
@@ -161,22 +161,21 @@ func (t *TableDef[T]) Index(name string, cols ...string) *TableDef[T]
   once the column is registered on a table.
 - `Str() string` → alias of `String()`.
 
-`TableDef[T]` (via the embedded core) exposes:
+`*TableDef` exposes:
 
-- `Cols` — the bound field struct (`Users.Cols.ID`).
 - `Col(name string) *ColumnDef` — lookup by column name, panics if missing.
 - `Columns() []*ColumnDef` — columns in declaration order.
 - `GetIndices() []IndexDef` — declared indexes (`IndexDef{Name, Cols}`).
 - `TableName() string` — the table name.
 
-`TableDef` also implements `namedTable` (a `TableName() string` method), which
+`*TableDef` implements `namedTable` (a `TableName() string` method), which
 is all the `query` package needs, so `schema.Table`s plug straight into
 `Select`, `Insert`, `Update`, and `Delete`.
 
 ## The registry
 
-Each call to `schema.Table(...)` appends the table's core to the package-level
-`Registry` (a `[]*tableCore`). `migrate.BuildSnapshot()` walks `Registry` and
+Each call to `schema.Table(...)` appends the table to the package-level
+`Registry` (a `[]*TableDef`). `migrate.BuildSnapshot()` walks `Registry` and
 `EnumRegistry` to produce the schema snapshot used by the migration generator —
 so every table you want tracked must be declared at package `init` time (i.e.
 as a package-level `var`) in a package the generator can import.

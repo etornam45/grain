@@ -76,7 +76,7 @@ func main() {
             "email":  "ama@example.com",
             "status": "active",
         }).
-        Returning(schema.Users.Cols.ID.String()).
+        Returning(schema.Users.Col("id").String()).
         Scan(ctx, conn, &newID)
     if err != nil {
         panic(err)
