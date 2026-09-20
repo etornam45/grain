@@ -9,6 +9,9 @@ import (
 )
 
 type GenerateOptions struct {
+	// Force bypasses the ManualReviewRequiredError guard and writes destructive
+	// changes (type casts without USING, SET NOT NULL without backfill, etc.)
+	// into the migration file. Use only when you know the data is safe.
 	Force bool
 }
 

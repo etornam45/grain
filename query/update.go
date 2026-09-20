@@ -49,6 +49,7 @@ func (u *UpdateBuilder) OrderByNulls(cols []string, dir OrderDir, nulls NullsOrd
 	return u
 }
 
+// Limit caps how many rows the update touches (PostgreSQL UPDATE ... LIMIT n).
 func (u *UpdateBuilder) Limit(n int) *UpdateBuilder { u.limitN = &n; return u }
 
 func (u *UpdateBuilder) Returning(cols ...string) *UpdateBuilder {

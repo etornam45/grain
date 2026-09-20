@@ -71,6 +71,8 @@ func (t *TableDef) IndexUnique(name string, cols ...string) *TableDef {
 	return t
 }
 
+// IndexPartial creates an index restricted to rows matching the predicate,
+// e.g. IndexPartial("idx_users_active", []string{"status"}, "status = 'active'").
 func (t *TableDef) IndexPartial(name string, cols []string, predicate string) *TableDef {
 	t.indices = append(t.indices, IndexDef{Name: name, Cols: cols, Predicate: predicate})
 	return t

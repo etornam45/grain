@@ -44,6 +44,10 @@ type Change struct {
 	// confirmation resolves — e.g. a column type or a NOT NULL column with no default.
 	Destructive bool
 
+	// RequiresNoTx means this statement cannot run inside the transaction
+	// Apply() wraps each migration file in — e.g. ALTER TYPE ... ADD VALUE.
+	// The generate step emits these into dedicated `-- +RequiresNoTx Up|Down`
+	// sections that the apply step runs outside the migration transaction.
 	RequiresNoTx bool
 	Note         string
 }

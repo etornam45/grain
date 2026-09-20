@@ -454,6 +454,8 @@ func columnTypeWithCollation(c ColumnSnapshot) string {
 	return c.Type
 }
 
+// diffForeignKeys emits drop+add changes for FK attributes that changed on an
+// existing column, plus add/drop for columns that gained/lost a reference.
 func diffForeignKeys(table string, oldT, newT TableSnapshot) []Change {
 	oldCols := map[string]ColumnSnapshot{}
 	for _, c := range oldT.Columns {

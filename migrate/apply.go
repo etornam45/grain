@@ -288,10 +288,13 @@ func runInTx(ctx context.Context, dbConn migrationExecutor, sqlText string, vers
 	return tx.Commit()
 }
 
+// RollbackLast rolls back the single most recent applied migration.
 func RollbackLast(ctx context.Context, dbConn *sql.DB, dir string) error {
 	return RollbackN(ctx, dbConn, dir, 1)
 }
 
+// RollbackN rolls back the n most recent applied migrations (or all of them if
+// fewer than n are applied).
 func RollbackN(ctx context.Context, dbConn *sql.DB, dir string, n int) error {
 	if n <= 0 {
 		return fmt.Errorf("rollback count must be positive, got %d", n)
@@ -327,6 +330,8 @@ func RollbackN(ctx context.Context, dbConn *sql.DB, dir string, n int) error {
 	})
 }
 
+// rollbackOne down-migrates the last applied migration in files and removes its
+// tracking row. It returns false when there is nothing left to roll back.
 func rollbackOne(ctx context.Context, conn *sql.Conn, files []MigrationFile, applied map[int64]string) (bool, error) {
 	var last *MigrationFile
 	for i := len(files) - 1; i >= 0; i-- {

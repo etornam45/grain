@@ -126,6 +126,8 @@ type journal struct {
 	Entries []journalEntry `json:"entries"`
 }
 
+// snapshotVersion is the format version baked into every generated snapshot
+// file so that journal/snapshot mismatches are loud rather than silent.
 func checkFormatVersion(snap *Snapshot) error {
 	if snap.FormatVersion != 0 && snap.FormatVersion != snapshotFormatVersion {
 		return fmt.Errorf(

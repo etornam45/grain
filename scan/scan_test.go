@@ -165,4 +165,3 @@ func TestDestinationsFlattensPointerEmbeddedStruct(t *testing.T) {
 		t.Fatalf("scan target did not reach embedded pointer row: %+v", p)
 	}
 }
-
