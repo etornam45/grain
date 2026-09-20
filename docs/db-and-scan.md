@@ -23,6 +23,14 @@ defer conn.Close()
 Any `database/sql` driver works, so `github.com/lib/pq` (`db.Open("postgres", dsn)`) is a drop-in alternative. The `pgx` stdlib driver is used throughout
 this documentation and by the CLI.
 
+Use `db.Connect` when you want the connection **verified before you use it** —
+it opens the pool and pings; on a failed ping it closes the pool and returns
+the error (never a half-open connection):
+
+```go
+conn, err := db.Connect(ctx, "pgx", "postgres://user:pass@localhost:5432/app?sslmode=disable")
+```
+
 `*db.DB` embeds `*sql.DB`, so all standard `database/sql` methods (pool
 settings, `PingContext`, `Close`, ...) are available too.
 
@@ -72,6 +80,18 @@ returned as-is.
 - Return an error from `fn` to abort; the rollback is automatic — you don't
 need to call `Rollback()`.
 
+For isolation level / read-only control, use `TransactionOpts`:
+
+```go
+readOnly := db.TransactionOpts{sql.LevelReadCommitted, true}
+err := conn.TransactionOpts(ctx, &readOnly, func(tx *db.Tx) error {
+    // SELECTs only; any write returns a driver error and rolls back
+    ...
+})
+```
+
+A nil `*TransactionOpts` (what `Transaction` uses) means the driver defaults.
+
 
 
 ## Scan
@@ -102,9 +122,39 @@ The scanner takes the result columns from the driver (e.g. `users.name`,
 
 1. A `db` tag equal to the column name is an exact match.
 2. Otherwise it falls back to a **suffix match** — a tag like `users.name`
-  still matches a result column `name` (and `users.name`.)
+   still matches a result column `name` (and `users.name`.)
 3. If no field matches a result column, scanning fails with an error naming the
-  offending column — you won't silently drop data.
+   offending column — you won't silently drop data.
+
+Two suffixes matching the same bare column (e.g. `db:"users.id"` and
+`db:"orders.id"` against a result column `id`) is reported as ambiguous — use
+the fully-qualified column name in your query instead.
+
+### Field rules
+
+- **Embedded structs flatten.** Tags from embedded (anonymous) structs are
+  picked up as if declared directly on the outer struct — handy for shared
+  `created_at`/`updated_at` groups.
+- **`db:"-"` skips a field** entirely (neither scanned nor required).
+- **Pointer fields** are allocated automatically and set only when their column
+  is non-null, so a NULL maps to a nil pointer and a value to a non-nil one.
+- **Duplicate `db` tags** within one struct are an error, so you never scan two
+  fields with the same tag silently.
+
+```go
+type timestamps struct {
+    CreatedAt string `db:"created_at"`
+    UpdatedAt string `db:"updated_at"`
+}
+
+type User struct {
+    timestamps       // flattened
+    ID   string      `db:"users.id"`
+    Name string      `db:"users.name"`
+    Bio  *string     `db:"users.bio"` // NULL -> nil
+    Skip string      `db:"-"`
+}
+```
 
 This is why single-table queries can use `db:"name"` while joined queries should
 use `db:"users.name"`.

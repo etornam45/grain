@@ -8,12 +8,12 @@ Grain is split into a few small, composable packages:
 
 | Package         | Purpose                                                                 |
 | --------------- | ----------------------------------------------------------------------- |
-| `github.com/etornam45/grain/schema`  | Type-safe table, column, enum and index definitions                     |
+| `github.com/etornam45/grain/schema`  | Type-safe table, column, enum, type, constraint and index definitions   |
 | `github.com/etornam45/grain/query`   | Fluent SQL query builder for `SELECT`, `INSERT`, `UPDATE`, `DELETE`     |
-| `github.com/etornam45/grain/db`      | Connection wrapper (`Open`, `Transaction`) and the `Executor` interface |
+| `github.com/etornam45/grain/db`      | Connection wrapper (`Open`, `Connect`, `TransactionOpts`) and the `Executor` interface |
 | `github.com/etornam45/grain/scan`    | Reflection-based scanning of rows into Go structs via `db:` tags        |
 | `github.com/etornam45/grain/migrate` | Snapshot-driven migration generation, apply, rollback and status        |
-| `grain` CLI     | `generate`, `migrate up / down / status`                                |
+| `grain` CLI     | `generate`, `migrate init / up / down [n] / redo / status`              |
 
 
 > NOTE: this project is in its early development and may have API changes
@@ -28,13 +28,16 @@ Grain is split into a few small, composable packages:
 ### Reference
 
 - [Schema](schema.md) — column types, `ColumnDef` modifiers, tables, binds,
-enums, foreign keys and indexes.
+  enums, foreign keys, identity/generated/check columns and indexes.
 - [Query](query.md) — select/insert/update/delete builders, conditions, joins,
-ordering, grouping, pagination.
-- [db & scan](db-and-scan.md) — connecting, transactions, and mapping rows into
-structs.
+  ordering, grouping, pagination — plus subqueries, CTEs, set operations,
+  row-level locking and table aliases.
+- [db & scan](db-and-scan.md) — connecting, transactions (with isolation /
+  read-only options), and mapping rows into structs (embedded structs,
+  pointer fields, `db:"-"`).
 - [Migrations & CLI](migrations.md) — the `grain` CLI, snapshot/diff workflow,
-migration file format, applied-state tracking (checksums), and safety notes.
+  migration file format, applied-state tracking (checksums), rename/destructive
+  prompts, and safety notes.
 
 
 

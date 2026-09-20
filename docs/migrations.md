@@ -18,10 +18,12 @@ library: users of your application don't need it unless they manage migrations.
 ```bash
 > grain --help
 usage:
-  grain generate -schema <dir> [name]
-  grain migrate up                       (requires DATABASE_URL)
-  grain migrate down                     (requires DATABASE_URL)
-  grain migrate status                   (requires DATABASE_URL)
+  grain generate -schema <dir> [-force] [-yes] [name]
+  grain migrate init                      (requires DATABASE_URL)
+  grain migrate up                        (requires DATABASE_URL)
+  grain migrate down [n]                  (requires DATABASE_URL)
+  grain migrate redo                      (requires DATABASE_URL)
+  grain migrate status                    (requires DATABASE_URL)
 ```
 
 ## The workflow
@@ -50,6 +52,11 @@ grain generate -schema <dir> [name]
   `schema.Enum(...)` definitions (a package import path under your module).
 - `[name]` — an optional migration name; defaults to `change`. Spaces are
   replaced with underscores in the filename.
+- `-yes` — run non-interactively: rename/delete ambiguity prompts resolve
+  automatically (rename to the only candidate, otherwise ignore).
+- `-force` — generate destructive changes instead of failing with
+  `ManualReviewRequiredError` (type casts without `USING`, `SET NOT NULL`, ...).
+  Use only when you've verified the data.
 
 Generation loads the **current** schema from your code, diffing it against the
 **latest snapshot** recorded from the previous run. The output is a migration
@@ -84,13 +91,36 @@ Grain then compares old vs new snapshots and emits changes:
 | `drop_column`       | `ALTER TABLE ... DROP COLUMN ...`    |
 | `rename_column`     | `ALTER TABLE ... RENAME COLUMN ...`  |
 | `alter_column_type` | `ALTER TABLE ... ALTER COLUMN ... TYPE ...` |
+| `alter_column_identity` | `ADD/DROP GENERATED ALWAYS AS IDENTITY` |
+| `alter_column_default` | `SET/DROP DEFAULT`                |
+| `alter_column_nullability` | `SET/DROP NOT NULL`             |
+| `alter_column_generated` | `ADD/DROP GENERATED ALWAYS AS (...)` |
+| `alter_column_check` | `ADD/DROP CONSTRAINT ... CHECK (...)` |
+| `add_column_unique` / `drop_column_unique` | add/remove `UNIQUE` on a column |
+| `add_primary_key` / `drop_primary_key` | add/remove the table primary key |
+| `add_foreign_key` / `drop_foreign_key` | add/remove a foreign key |
+| `add_unique_constraint` / `drop_unique_constraint` | table-level `UNIQUE` |
+| `add_constraint` / `drop_constraint` | table-level `CHECK` |
 | `create_enum`       | `CREATE TYPE ... AS ENUM (...)`      |
 | `add_enum_value`    | `ALTER TYPE ... ADD VALUE ...`       |
+| `rename_enum`       | `ALTER TYPE ... RENAME TO ...`       |
+| `drop_enum`         | `DROP TYPE ...`                      |
 | `add_index`         | `CREATE INDEX ...`                   |
 | `drop_index`        | `DROP INDEX IF EXISTS ...`           |
 
+The diff understands column attribute changes (type, collation via
+`COLLATE`), identity, generated expressions, check constraints, nullability,
+uniqueness and defaults, and emits the matching `ALTER TABLE` statements.
+Table-level unique/check constraints and partial/unique indexes are diffed the
+same way.
+
 New tables are created in foreign-key dependency order; a cycle among new
 tables is reported so you can split the migration.
+
+The `down` migrations are generated to reverse every `up`, except for drops
+(table/column/type) where old definitions can't be reconstructed — those get a
+`-- cannot auto-generate` comment and are flagged **irreversible** by the apply
+step.
 
 ### Ambiguity prompts
 
@@ -109,8 +139,14 @@ Table "users" is in the last migration but not in your schema code.
 - A **delete** generates a `DROP`.
 - **ignore** leaves the database alone but stops tracking it in the snapshot.
 
-The prompt is pluggable: `migrate.PromptFunc` can be replaced with an
-automated resolver for CI (`migrate.CLIPrompt` is the default interactive one).
+Rename prompts apply to **tables, columns, and enums**. `migrate.PromptFunc`
+is pluggable: `migrate.CLIPrompt` is the interactive default, and
+`migrate.AutoResolvePrompt` (used by `generate -yes`) renames to the only
+candidate or ignores when ambiguous, for CI.
+
+> When a rename target is chosen, Grain does **not** also `CREATE`/`ADD` a fresh
+> object with that name — the rename and the rest of the diff compose into one
+> correct migration.
 
 ### Destructive changes
 
@@ -120,11 +156,13 @@ manual review instead:
 
 - `alter_column_type` — casting existing data may fail or be lossy; add a
   `USING` clause yourself.
+- `alter_column_nullability` (`SET NOT NULL`) — fails on existing NULL rows;
+  backfill first.
+- `alter_column_generated` — expression changes on existing rows.
 - Adding a `NOT NULL` column with **no default** to a table that may have rows.
-- Dropping a table or column (Grain can't reconstruct the dropped definition,
-  so the `down` migration is a `-- cannot auto-generate` comment).
 
-Write these by hand (or backfill data first), then re-run `generate`.
+Write these by hand (or backfill data first), then re-run `generate`, or pass
+`-force` once you're sure (`grain generate -schema ... -force ...`).
 
 ### Enum values
 
@@ -146,8 +184,10 @@ ALTER TYPE user_status ADD VALUE IF NOT EXISTS 'pending';
 ...
 ```
 
-Removing enum values and renaming enums are not yet wired up (PostgreSQL has no
-`DROP VALUE`).
+Removing enum values still has no generator path (PostgreSQL has no
+`DROP VALUE`) — when values disappear the snapshot simply stops tracking them.
+Use `generate -yes` or the rename prompt to handle enum renames; a removed
+enum can be dropped via the same delete prompt.
 
 ## Snapshot journal
 
@@ -161,9 +201,24 @@ Every successful `generate` records the new snapshot under
 Snapshot files are for diffing, not for rewriting your database — the source of
 truth is `db/migrations/*.sql`.
 
+Snapshots are self-describing: each file carries a `format_version` (currently
+`2`). `LoadLatestSnapshot` refuses to diff snapshots from an incompatible
+version, so a schema-format change fails loudly instead of silently generating
+garbage migrations.
+
 ## migrate
 
 All migrate commands require `DATABASE_URL` and connect directly to PostgreSQL.
+The CLI verifies the connection (`db.Connect`) before touching anything.
+
+### init
+
+```bash
+DATABASE_URL=... grain migrate init
+```
+
+Creates `db/migrations/` plus the `grain` schema and
+`grain.schema_migrations` tracking table — without applying anything. Idempotent.
 
 ### up
 
@@ -198,17 +253,28 @@ grain.schema_migrations (
 ### down
 
 ```bash
-DATABASE_URL=... grain migrate down
+DATABASE_URL=... grain migrate down       # roll back the latest
+DATABASE_URL=... grain migrate down 3     # roll back the latest 3
 ```
 
-Rolls back the **most recent applied** migration only:
+Rolls back applied migrations, newest first:
 
 1. Verifies checksums (so you never roll back an edited migration).
 2. Runs `-- +RequiresNoTx Down` outside a transaction.
 3. Runs `-- +migrate Down` inside a transaction, then deletes the tracking row.
 
-Migrations whose `down` section is only comments (e.g. a generated table/column
-drop) are reported as irreversible and left untouched.
+If the count is larger than the number of applied migrations, all of them are
+rolled back. Migrations whose `down` section is only comments (e.g. a
+generated table/column drop) are reported as irreversible and the run stops.
+
+### redo
+
+```bash
+DATABASE_URL=... grain migrate redo
+```
+
+Rolls back the latest applied migration and applies it again (a full
+`down 1 && up`). Handy while iterating on a migration you just ran.
 
 ### status
 
@@ -232,12 +298,17 @@ Everything under the hood is exported from `github.com/etornam45/grain/migrate`:
 
 ```go
 migrate.LoadMigrations(dir)                 // []MigrationFile{Version, Name, UpSQL, DownSQL, NoTxUpSQL, NoTxDownSQL, Path, Checksum}
+migrate.Init(ctx, dbConn, dir)              // create dir + tracking table
 migrate.Apply(ctx, dbConn, dir)             // apply pending migrations (*sql.DB)
-migrate.RollbackLast(ctx, dbConn, dir)      // roll back the last applied one
-migrate.Status(ctx, dbConn, dir)            // []MigrationStatus{Applied, ChecksumVerified, ...}
-migrate.GenerateFromSnapshot(snap, dir, name, prompt) // write a migration file
+migrate.RollbackN(ctx, dbConn, dir, n)      // roll back the latest n applied
+migrate.RollbackLast(ctx, dbConn, dir)      // roll back the latest (RollbackN(1))
+migrate.Status(ctx, dbConn, dir)            // []MigrationStatus{Applied, ChecksumVerified, Orphaned, ...}
+migrate.GenerateFromSnapshot(snap, dir, name, prompt)                          // write a migration file
+migrate.GenerateFromSnapshotOpts(snap, dir, name, prompt, opts)                // write, honoring GenerateOptions{Force}
 migrate.BuildSnapshot()                     // Snapshot of schema.Registry + EnumRegistry
+migrate.LoadLatestSnapshot(dir)             // Snapshot from the last journal entry
 migrate.Diff(old, new snap, prompt)         // []Change from two snapshots
+migrate.CLIPrompt / migrate.AutoResolvePrompt // built-in PromptFuncs (interactive / CI)
 ```
 
 See [migrations in the repo](../migrate) for the full source.
