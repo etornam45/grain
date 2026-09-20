@@ -29,6 +29,7 @@ type MigrationStatus struct {
 	MigrationFile
 	Applied          bool
 	ChecksumVerified bool
+	Orphaned         bool
 }
 
 type migrationExecutor interface {
@@ -152,6 +153,17 @@ func appliedChecksums(ctx context.Context, dbConn migrationExecutor) (map[int64]
 	return applied, rows.Err()
 }
 
+// Init ensures the migrations directory and the grain.schema_migrations
+// tracking table exist, without applying anything.
+func Init(ctx context.Context, dbConn *sql.DB, dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return withMigrationLock(ctx, dbConn, func(conn *sql.Conn) error {
+		return ensureMigrationsTable(ctx, conn)
+	})
+}
+
 func Apply(ctx context.Context, dbConn *sql.DB, dir string) error {
 	files, err := LoadMigrations(dir)
 	if err != nil {
@@ -167,6 +179,9 @@ func Apply(ctx context.Context, dbConn *sql.DB, dir string) error {
 		}
 		if err := verifyAndBackfillChecksums(ctx, conn, files, applied); err != nil {
 			return err
+		}
+		if orphans := orphanedApplied(applied, files); len(orphans) > 0 {
+			return fmt.Errorf("applied migration(s) %s are not on disk anymore; restore them before continuing", intsToString(orphans))
 		}
 		for _, f := range files {
 			if _, ok := applied[f.Version]; ok {
@@ -208,9 +223,41 @@ func Status(ctx context.Context, dbConn *sql.DB, dir string) ([]MigrationStatus,
 				ChecksumVerified: !isApplied || recorded == file.Checksum,
 			})
 		}
+		for _, v := range orphanedApplied(applied, files) {
+			statuses = append(statuses, MigrationStatus{
+				MigrationFile: MigrationFile{Version: v},
+				Applied:       true,
+				Orphaned:      true,
+			})
+		}
 		return nil
 	})
 	return statuses, err
+}
+
+// orphanedApplied returns applied migration versions that have no matching
+// file on disk (deleted or renamed since they were applied).
+func orphanedApplied(applied map[int64]string, files []MigrationFile) []int64 {
+	onDisk := map[int64]bool{}
+	for _, f := range files {
+		onDisk[f.Version] = true
+	}
+	var orphans []int64
+	for v := range applied {
+		if !onDisk[v] {
+			orphans = append(orphans, v)
+		}
+	}
+	sort.Slice(orphans, func(i, j int) bool { return orphans[i] < orphans[j] })
+	return orphans
+}
+
+func intsToString(vals []int64) string {
+	parts := make([]string, len(vals))
+	for i, v := range vals {
+		parts[i] = strconv.FormatInt(v, 10)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func runOutsideTx(ctx context.Context, dbConn migrationExecutor, sqlText string) error {
@@ -242,6 +289,13 @@ func runInTx(ctx context.Context, dbConn migrationExecutor, sqlText string, vers
 }
 
 func RollbackLast(ctx context.Context, dbConn *sql.DB, dir string) error {
+	return RollbackN(ctx, dbConn, dir, 1)
+}
+
+func RollbackN(ctx context.Context, dbConn *sql.DB, dir string, n int) error {
+	if n <= 0 {
+		return fmt.Errorf("rollback count must be positive, got %d", n)
+	}
 	files, err := LoadMigrations(dir)
 	if err != nil {
 		return err
@@ -254,41 +308,62 @@ func RollbackLast(ctx context.Context, dbConn *sql.DB, dir string) error {
 		if err != nil {
 			return err
 		}
+		if orphans := orphanedApplied(applied, files); len(orphans) > 0 {
+			return fmt.Errorf("applied migration(s) %s are not on disk anymore; restore them before rolling back", intsToString(orphans))
+		}
 		if err := verifyAndBackfillChecksums(ctx, conn, files, applied); err != nil {
 			return err
 		}
-		var last *MigrationFile
-		for i := len(files) - 1; i >= 0; i-- {
-			if _, ok := applied[files[i].Version]; ok {
-				last = &files[i]
-				break
-			}
-		}
-		if last == nil {
-			return fmt.Errorf("no applied migrations to roll back")
-		}
-		if !hasExecutableSQL(last.DownSQL) && !hasExecutableSQL(last.NoTxDownSQL) {
-			return fmt.Errorf("migration %d_%s is irreversible: no executable down migration", last.Version, last.Name)
-		}
-		if err := runOutsideTx(ctx, conn, last.NoTxDownSQL); err != nil {
-			return fmt.Errorf("migration %d_%s no-transaction down failed: %w", last.Version, last.Name, err)
-		}
-		tx, err := conn.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		if hasExecutableSQL(last.DownSQL) {
-			if _, err := tx.ExecContext(ctx, last.DownSQL); err != nil {
-				_ = tx.Rollback()
+		for i := 0; i < n; i++ {
+			handled, err := rollbackOne(ctx, conn, files, applied)
+			if err != nil {
 				return err
 			}
+			if !handled {
+				return nil
+			}
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM grain.schema_migrations WHERE version = $1`, last.Version); err != nil {
-			_ = tx.Rollback()
-			return err
-		}
-		return tx.Commit()
+		return nil
 	})
+}
+
+func rollbackOne(ctx context.Context, conn *sql.Conn, files []MigrationFile, applied map[int64]string) (bool, error) {
+	var last *MigrationFile
+	for i := len(files) - 1; i >= 0; i-- {
+		if _, ok := applied[files[i].Version]; ok {
+			last = &files[i]
+			break
+		}
+	}
+	if last == nil {
+		return false, nil
+	}
+	if !hasExecutableSQL(last.DownSQL) && !hasExecutableSQL(last.NoTxDownSQL) {
+		return true, fmt.Errorf("migration %d_%s is irreversible: no executable down migration", last.Version, last.Name)
+	}
+	if err := runOutsideTx(ctx, conn, last.NoTxDownSQL); err != nil {
+		return true, fmt.Errorf("migration %d_%s no-transaction down failed: %w", last.Version, last.Name, err)
+	}
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return true, err
+	}
+	if hasExecutableSQL(last.DownSQL) {
+		if _, err := tx.ExecContext(ctx, last.DownSQL); err != nil {
+			_ = tx.Rollback()
+			return true, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM grain.schema_migrations WHERE version = $1`, last.Version); err != nil {
+		_ = tx.Rollback()
+		return true, err
+	}
+	if err := tx.Commit(); err != nil {
+		return true, err
+	}
+	delete(applied, last.Version)
+	fmt.Printf("rolled back %d_%s\n", last.Version, last.Name)
+	return true, nil
 }
 
 func withMigrationLock(ctx context.Context, dbConn *sql.DB, fn func(*sql.Conn) error) error {
