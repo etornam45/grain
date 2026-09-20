@@ -13,6 +13,7 @@ type AmbiguityKind string
 const (
 	AmbiguousTable  AmbiguityKind = "table"
 	AmbiguousColumn AmbiguityKind = "column"
+	AmbiguousEnum   AmbiguityKind = "enum"
 )
 
 type PromptContext struct {
@@ -35,6 +36,8 @@ func CLIPrompt(ctx PromptContext) (Resolution, error) {
 		fmt.Printf("\nTable %q is in the last migration but not in your schema code.\n", ctx.OldName)
 	case AmbiguousColumn:
 		fmt.Printf("\nColumn %q on table %q is in the last migration but not in your schema code.\n", ctx.OldName, ctx.Table)
+	case AmbiguousEnum:
+		fmt.Printf("\nEnum type %q is in the last migration but not in your schema code.\n", ctx.OldName)
 	}
 
 	for i, c := range ctx.Candidates {
@@ -57,4 +60,14 @@ func CLIPrompt(ctx PromptContext) (Resolution, error) {
 	default:
 		return Resolution{Action: "ignore"}, nil
 	}
+}
+
+// AutoResolvePrompt drives rename/delete decisions without a human. It only
+// renames when there is exactly one candidate; an ambiguous set of candidates
+// is ignored rather than guessing wrong silently.
+func AutoResolvePrompt(ctx PromptContext) (Resolution, error) {
+	if len(ctx.Candidates) == 1 {
+		return Resolution{Action: "rename", Target: ctx.Candidates[0]}, nil
+	}
+	return Resolution{Action: "ignore"}, nil
 }
