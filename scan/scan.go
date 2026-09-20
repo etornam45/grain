@@ -131,13 +131,7 @@ func destinations(t any, cols []string) ([]any, error) {
 			}
 			field = matches[0]
 		}
-		if field.Kind() == reflect.Pointer {
-			nv := reflect.New(field.Type().Elem())
-			field.Set(nv)
-			ptrs[i] = nv.Interface()
-		} else {
-			ptrs[i] = field.Addr().Interface()
-		}
+		ptrs[i] = field.Addr().Interface()
 	}
 	return ptrs, nil
 }

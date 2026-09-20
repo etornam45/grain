@@ -67,9 +67,12 @@ func (u *UpdateBuilder) SQL() (string, []any) {
 	sets := make([]string, len(keys))
 	args := make([]any, 0, len(keys))
 	for i, col := range keys {
-		switch v := u.set[col].(type) {
-		case colRef:
-			sets[i] = fmt.Sprintf("%s = %s", col, v.String())
+		setVal := u.set[col]
+		if ref, ok := asColRef(setVal); ok {
+			sets[i] = fmt.Sprintf("%s = %s", col, ref)
+			continue
+		}
+		switch v := setVal.(type) {
 		case Subquery:
 			sets[i] = fmt.Sprintf("%s = (%s)", col, v.sqlAt(len(args)+1))
 			args = append(args, v.args...)

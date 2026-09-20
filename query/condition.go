@@ -21,8 +21,8 @@ type simpleCond struct {
 }
 
 func (c simpleCond) SQL(argOffset int) (string, []any) {
-	if r, ok := c.val.(colRef); ok {
-		return fmt.Sprintf("%s %s %s", c.left, c.op, r.String()), nil
+	if ref, ok := asColRef(c.val); ok {
+		return fmt.Sprintf("%s %s %s", c.left, c.op, ref), nil
 	}
 	if c.val == nil {
 		// A nil value means NULL. Render it as a literal so no driver receives
@@ -110,9 +110,9 @@ func (c inCond) SQL(argOffset int) (string, []any) {
 	var args []any
 	offset := argOffset
 	for _, v := range c.vals {
-		if r, ok := v.(colRef); ok {
+		if ref, ok := asColRef(v); ok {
 			// Column references render inline; only literals become placeholders.
-			parts = append(parts, r.String())
+			parts = append(parts, ref)
 		} else {
 			parts = append(parts, fmt.Sprintf("$%d", offset))
 			args = append(args, v)
@@ -195,8 +195,8 @@ func (c betweenCond) SQL(argOffset int) (string, []any) {
 // valueRefOrLiteral renders a bound value: column references inline, literals
 // as placeholders.
 func valueRefOrLiteral(v any, offset int) (string, []any) {
-	if r, ok := v.(colRef); ok {
-		return r.String(), nil
+	if ref, ok := asColRef(v); ok {
+		return ref, nil
 	}
 	return fmt.Sprintf("$%d", offset), []any{v}
 }

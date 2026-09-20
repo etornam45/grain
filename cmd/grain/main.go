@@ -9,6 +9,8 @@ import (
 
 	"github.com/etornam45/grain/db"
 	"github.com/etornam45/grain/migrate"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 func main() {

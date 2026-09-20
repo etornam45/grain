@@ -5,7 +5,23 @@ import (
 	"reflect"
 	"strings"
 	"unsafe"
+
+	"github.com/etornam45/grain/schema"
 )
+
+// asColRef renders v inline only when it is a genuine grain column reference
+// (query.ColRef or *schema.ColumnDef). A bare String() method check would also
+// match fmt.Stringer values like time.Time and render them as raw SQL.
+func asColRef(v any) (string, bool) {
+	switch r := v.(type) {
+	case ColRef:
+		return r.String(), true
+	case *schema.ColumnDef:
+		return r.String(), true
+	default:
+		return "", false
+	}
+}
 
 type ColRef struct {
 	name string

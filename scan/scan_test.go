@@ -82,12 +82,16 @@ type pointerRow struct {
 
 func TestDestinationsAllocatesPointerFields(t *testing.T) {
 	var p pointerRow
-	name := "alice"
 	ptrs, err := destinations(&p, []string{"users.id", "users.name", "bad"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	*(ptrs[1].(*string)) = name
+	namePtr, ok := ptrs[1].(**string)
+	if !ok {
+		t.Fatalf("pointer field dest should be **string, got %T", ptrs[1])
+	}
+	name := "alice"
+	*namePtr = &name
 	if p.Name == nil || *p.Name != "alice" {
 		t.Fatalf("pointer field not populated: %v", p.Name)
 	}
