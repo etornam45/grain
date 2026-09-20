@@ -333,7 +333,7 @@ func (q *SelectBuilder[T]) render(base int) (string, []any) {
 		lockSQL += " " + q.lockOpt
 	}
 	if lockSQL != "" {
-		b.WriteString(" " + lockSQL)
+		b.WriteString(" ");b.WriteString(lockSQL)
 	}
 
 	return b.String(), args
