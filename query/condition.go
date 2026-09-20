@@ -24,6 +24,20 @@ func (c simpleCond) SQL(argOffset int) (string, []any) {
 	if r, ok := c.val.(colRef); ok {
 		return fmt.Sprintf("%s %s %s", c.left, c.op, r.String()), nil
 	}
+	if c.val == nil {
+		// A nil value means NULL. Render it as a literal so no driver receives
+		// a nil-typed argument (which lib/pq and pgx both reject), and make
+		// equality/inequality map to IS NULL / IS NOT NULL where NULL semantics
+		// are falsy.
+		switch c.op {
+		case "=":
+			return c.left + " IS NULL", nil
+		case "<>":
+			return c.left + " IS NOT NULL", nil
+		default:
+			return fmt.Sprintf("%s %s NULL", c.left, c.op), nil
+		}
+	}
 	return fmt.Sprintf("%s %s $%d", c.left, c.op, argOffset), []any{c.val}
 }
 
@@ -92,15 +106,24 @@ func (c inCond) SQL(argOffset int) (string, []any) {
 		}
 		return "1 = 0", nil
 	}
-	placeholders := make([]string, len(c.vals))
-	for i := range c.vals {
-		placeholders[i] = fmt.Sprintf("$%d", argOffset+i)
+	var parts []string
+	var args []any
+	offset := argOffset
+	for _, v := range c.vals {
+		if r, ok := v.(colRef); ok {
+			// Column references render inline; only literals become placeholders.
+			parts = append(parts, r.String())
+		} else {
+			parts = append(parts, fmt.Sprintf("$%d", offset))
+			args = append(args, v)
+			offset++
+		}
 	}
 	op := "IN"
 	if c.not {
 		op = "NOT IN"
 	}
-	return fmt.Sprintf("%s %s (%s)", c.col, op, strings.Join(placeholders, ", ")), c.vals
+	return fmt.Sprintf("%s %s (%s)", c.col, op, strings.Join(parts, ", ")), args
 }
 
 func flattenValues(vals []any) []any {
@@ -118,10 +141,20 @@ func flattenValues(vals []any) []any {
 }
 
 func In(col colRef, vals ...any) Condition {
+	if len(vals) == 1 {
+		if sub, ok := vals[0].(Subquery); ok {
+			return subqueryCond{col: col.String(), op: "IN", sub: sub}
+		}
+	}
 	return inCond{col: col.String(), vals: flattenValues(vals), not: false}
 }
 
 func NotIn(col colRef, vals ...any) Condition {
+	if len(vals) == 1 {
+		if sub, ok := vals[0].(Subquery); ok {
+			return subqueryCond{col: col.String(), op: "NOT IN", sub: sub}
+		}
+	}
 	return inCond{col: col.String(), vals: flattenValues(vals), not: true}
 }
 
@@ -134,19 +167,94 @@ func (c rawCond) SQL(argOffset int) (string, []any) {
 	if len(c.args) == 0 {
 		return c.expr, nil
 	}
-	var b strings.Builder
-	argIdx := argOffset
-	for _, r := range c.expr {
-		if r == '?' {
-			fmt.Fprintf(&b, "$%d", argIdx)
-			argIdx++
-		} else {
-			b.WriteRune(r)
-		}
-	}
-	return b.String(), c.args
+	return renumberPlaceholders(c.expr, argOffset), c.args
 }
 
 func Raw(expr string, args ...any) Condition {
 	return rawCond{expr: expr, args: args}
+}
+
+type betweenCond struct {
+	col   string
+	low   any
+	high  any
+	not   bool
+}
+
+func (c betweenCond) SQL(argOffset int) (string, []any) {
+	op := "BETWEEN"
+	if c.not {
+		op = "NOT BETWEEN"
+	}
+	lowSQL, lowArgs := valueRefOrLiteral(c.low, argOffset)
+	highSQL, highArgs := valueRefOrLiteral(c.high, argOffset+len(lowArgs))
+	args := append(lowArgs, highArgs...)
+	return fmt.Sprintf("%s %s %s AND %s", c.col, op, lowSQL, highSQL), args
+}
+
+// valueRefOrLiteral renders a bound value: column references inline, literals
+// as placeholders.
+func valueRefOrLiteral(v any, offset int) (string, []any) {
+	if r, ok := v.(colRef); ok {
+		return r.String(), nil
+	}
+	return fmt.Sprintf("$%d", offset), []any{v}
+}
+
+// Between renders `col BETWEEN $n AND $n+1`.
+func Between(col colRef, low, high any) Condition {
+	return betweenCond{col: col.String(), low: low, high: high}
+}
+
+// NotBetween renders `col NOT BETWEEN $n AND $n+1`.
+func NotBetween(col colRef, low, high any) Condition {
+	return betweenCond{col: col.String(), low: low, high: high, not: true}
+}
+
+// jsonCond renders PostgreSQL JSON/JSONB operators against a bound value.
+type jsonCond struct {
+	col  string
+	op   string
+	val  any
+}
+
+func (c jsonCond) SQL(argOffset int) (string, []any) {
+	return fmt.Sprintf("%s %s $%d", c.col, c.op, argOffset), []any{c.val}
+}
+
+// Contains renders `col @> $n` (the JSON value contains the operand).
+func Contains(col colRef, val any) Condition { return jsonCond{col: col.String(), op: "@>", val: val} }
+
+// ContainedBy renders `col <@ $n` (the JSON value is contained by the operand).
+func ContainedBy(col colRef, val any) Condition { return jsonCond{col: col.String(), op: "<@", val: val} }
+
+// KeyExists renders `col ? $n` (the JSON value has the key).
+func KeyExists(col colRef, key any) Condition { return jsonCond{col: col.String(), op: "?", val: key} }
+
+// subqueryCond renders a nested SELECT against a column or as EXISTS.
+type subqueryCond struct {
+	col string
+	op  string // "IN", "= ANY", "<> ALL", or "" for EXISTS
+	sub Subquery
+}
+
+func (c subqueryCond) SQL(argOffset int) (string, []any) {
+	sql := c.sub.sqlAt(argOffset)
+	if c.col == "" {
+		return "EXISTS (" + sql + ")", c.sub.args
+	}
+	return fmt.Sprintf("%s %s (%s)", c.col, c.op, sql), c.sub.args
+}
+
+// Exists renders `EXISTS (SELECT ...)`.
+func Exists(sub Subquery) Condition { return subqueryCond{sub: sub} }
+
+// EqAny renders `col = ANY (SELECT ...)`.
+func EqAny(col colRef, sub Subquery) Condition {
+	return subqueryCond{col: col.String(), op: "= ANY", sub: sub}
+}
+
+// NeqAll renders `col <> ALL (SELECT ...)`.
+func NeqAll(col colRef, sub Subquery) Condition {
+	return subqueryCond{col: col.String(), op: "<> ALL", sub: sub}
 }
