@@ -8,11 +8,22 @@ import (
 	"time"
 )
 
-func GenerateFromSnapshot(newSnap Snapshot, dir, name string, prompt PromptFunc) (string, error) {
-	return generate(newSnap, dir, name, prompt)
+type GenerateOptions struct {
+	// Force bypasses the ManualReviewRequiredError guard and writes destructive
+	// changes (type casts without USING, SET NOT NULL without backfill, etc.)
+	// into the migration file. Use only when you know the data is safe.
+	Force bool
 }
 
-func generate(newSnap Snapshot, dir, name string, prompt PromptFunc) (string, error) {
+func GenerateFromSnapshot(newSnap Snapshot, dir, name string, prompt PromptFunc) (string, error) {
+	return generate(newSnap, dir, name, prompt, GenerateOptions{})
+}
+
+func GenerateFromSnapshotOpts(newSnap Snapshot, dir, name string, prompt PromptFunc, opts GenerateOptions) (string, error) {
+	return generate(newSnap, dir, name, prompt, opts)
+}
+
+func generate(newSnap Snapshot, dir, name string, prompt PromptFunc, opts GenerateOptions) (string, error) {
 	old, err := LoadLatestSnapshot(dir)
 	if err != nil {
 		return "", fmt.Errorf("load latest snapshot: %w", err)
@@ -25,9 +36,11 @@ func generate(newSnap Snapshot, dir, name string, prompt PromptFunc) (string, er
 	if len(changes) == 0 {
 		return "", fmt.Errorf("no schema changes detected")
 	}
-	for _, change := range changes {
-		if change.Destructive {
-			return "", &ManualReviewRequiredError{Changes: changes}
+	if !opts.Force {
+		for _, change := range changes {
+			if change.Destructive {
+				return "", &ManualReviewRequiredError{Changes: changes}
+			}
 		}
 	}
 

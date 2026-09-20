@@ -47,13 +47,23 @@ func main() {
 	}
 	fmt.Println("inserted user:", newID)
 
-	var u User
+	type User struct {
+		id     string `db:"user.id"`
+		name   string `db:"user.name"`
+		email  string `db:"user.email"`
+		age    int    `db:"user.age"`
+		status string `db:"user.staus"`
+	}
+
 	users, err := query.Select[User]().
 		From(schema.Users).
-		Where(query.Eq(query.Ref(&u, &u.Status), "active")).
+		Where(query.Eq(schema.Users.Col("status"), "active")).
 		OrderBy([]string{schema.Users.Col("name").String()}, query.Asc).
+		InnerJoin(schema.Orders, query.Eq(schema.Orders.Col("user_id"), schema.Users.Col("id"))).
 		Limit(10).
+		Offset(12).
 		All(ctx, conn)
+
 	if err != nil {
 		panic(err)
 	}

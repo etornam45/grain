@@ -9,7 +9,8 @@ import (
 
 // **All** scans every row into a []T, matching each result column to a struct
 // field via its `db:"table.column"` tag (or `db:"column"` for non-joined
-// queries).
+// queries). Embedded structs are flattened; a `db:"-"` tag skips the field;
+// pointer fields are allocated and set when their column is non-null.
 func All[T any](rows *sql.Rows) ([]T, error) {
 	cols, err := rows.Columns()
 	if err != nil {
@@ -42,17 +43,56 @@ func One[T any](row *sql.Row, cols []string) (T, error) {
 	return t, row.Scan(ptrs...)
 }
 
+// collectFields walks a struct (and embedded structs) collecting every
+// db-tagged field. Embedded fields flatten into the parent; field paths with
+// duplicate tags across the hierarchy are reported as errors.
+func collectFields(typ reflect.Type, v reflect.Value, out map[string]reflect.Value) error {
+	for i := 0; i < typ.NumField(); i++ {
+		sf := typ.Field(i)
+		field := v.Field(i)
+
+		embedded := sf.Anonymous && (sf.Type.Kind() == reflect.Struct ||
+			(sf.Type.Kind() == reflect.Pointer && sf.Type.Elem().Kind() == reflect.Struct))
+		if embedded {
+			ef := field
+			var etype reflect.Type
+			if sf.Type.Kind() == reflect.Pointer {
+				if ef.IsNil() {
+					continue
+				}
+				ef = ef.Elem()
+				etype = sf.Type.Elem()
+			} else {
+				etype = sf.Type
+			}
+			if err := collectFields(etype, ef, out); err != nil {
+				return err
+			}
+			continue
+		}
+
+		tag := sf.Tag.Get("db")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		if idx := strings.IndexByte(tag, ','); idx != -1 {
+			tag = tag[:idx]
+		}
+		if _, dup := out[tag]; dup {
+			return fmt.Errorf("grain: scan: duplicate db tag %q on %s", tag, typ.Name())
+		}
+		out[tag] = field
+	}
+	return nil
+}
+
 func destinations(t any, cols []string) ([]any, error) {
 	v := reflect.ValueOf(t).Elem()
 	typ := v.Type()
 
 	fieldByTag := map[string]reflect.Value{}
-	for i := 0; i < typ.NumField(); i++ {
-		tag := typ.Field(i).Tag.Get("db")
-		if tag == "" {
-			continue
-		}
-		fieldByTag[tag] = v.Field(i)
+	if err := collectFields(typ, v, fieldByTag); err != nil {
+		return nil, err
 	}
 
 	ptrs := make([]any, len(cols))
@@ -60,18 +100,29 @@ func destinations(t any, cols []string) ([]any, error) {
 		field, ok := fieldByTag[col]
 		if !ok {
 			// Fall back to matching by bare column name, so a query result
-			// column "name" still matches a `db:"users.name"` tag.
+			// column "name" still matches a `db:"users.name"` tag. Ambiguous
+			// matches (multiple tags ending in .name) are an error.
+			var matches []reflect.Value
 			for tag, f := range fieldByTag {
 				if tag == col || strings.HasSuffix(tag, "."+col) {
-					field, ok = f, true
-					break
+					matches = append(matches, f)
 				}
 			}
+			if len(matches) != 1 {
+				if len(matches) > 1 {
+					return nil, fmt.Errorf("grain: scan: column %q is ambiguous on %s", col, typ.Name())
+				}
+				return nil, fmt.Errorf("grain: scan: no destination field for column %q on %s", col, typ.Name())
+			}
+			field = matches[0]
 		}
-		if !ok {
-			return nil, fmt.Errorf("grain: scan: no destination field for column %q on %s", col, typ.Name())
+		if field.Kind() == reflect.Pointer {
+			nv := reflect.New(field.Type().Elem())
+			field.Set(nv)
+			ptrs[i] = nv.Interface()
+		} else {
+			ptrs[i] = field.Addr().Interface()
 		}
-		ptrs[i] = field.Addr().Interface()
 	}
 	return ptrs, nil
 }

@@ -14,6 +14,8 @@ type UpdateBuilder struct {
 	setCols   []string
 	setVals   []any
 	where     Condition
+	orderBy   []OrderBy
+	limitN    *int
 	returning []string
 }
 
@@ -21,6 +23,10 @@ func Update(table namedTable) *UpdateBuilder {
 	return &UpdateBuilder{table: table.TableName()}
 }
 
+// Set assigns columns. Values may be:
+//   - literals (bound as placeholders): Set(map[string]any{"name": "foo"})
+//   - column references (rendered as-is): Set(map[string]any{"count": seq})
+//   - subqueries (rendered as `col = (SELECT ...)`): Set(map[string]any{"total": sub})
 func (u *UpdateBuilder) Set(vals map[string]any) *UpdateBuilder {
 	keys := make([]string, 0, len(vals))
 	for k := range vals {
@@ -36,6 +42,19 @@ func (u *UpdateBuilder) Set(vals map[string]any) *UpdateBuilder {
 
 func (u *UpdateBuilder) Where(c Condition) *UpdateBuilder { u.where = c; return u }
 
+func (u *UpdateBuilder) OrderBy(cols []string, dir OrderDir) *UpdateBuilder {
+	u.orderBy = append(u.orderBy, OrderBy{dir: dir, cols: cols})
+	return u
+}
+
+func (u *UpdateBuilder) OrderByNulls(cols []string, dir OrderDir, nulls NullsOrder) *UpdateBuilder {
+	u.orderBy = append(u.orderBy, OrderBy{dir: dir, cols: cols, nulls: nulls})
+	return u
+}
+
+// Limit caps how many rows the update touches (PostgreSQL UPDATE ... LIMIT n).
+func (u *UpdateBuilder) Limit(n int) *UpdateBuilder { u.limitN = &n; return u }
+
 func (u *UpdateBuilder) Returning(cols ...string) *UpdateBuilder {
 	u.returning = cols
 	return u
@@ -45,8 +64,16 @@ func (u *UpdateBuilder) SQL() (string, []any) {
 	sets := make([]string, len(u.setCols))
 	args := make([]any, 0, len(u.setVals))
 	for i, col := range u.setCols {
-		sets[i] = fmt.Sprintf("%s = $%d", col, i+1)
-		args = append(args, u.setVals[i])
+		switch v := u.setVals[i].(type) {
+		case colRef:
+			sets[i] = fmt.Sprintf("%s = %s", col, v.String())
+		case Subquery:
+			sets[i] = fmt.Sprintf("%s = (%s)", col, v.sqlAt(len(args)+1))
+			args = append(args, v.args...)
+		default:
+			sets[i] = fmt.Sprintf("%s = $%d", col, len(args)+1)
+			args = append(args, v)
+		}
 	}
 
 	sql := fmt.Sprintf("UPDATE %s SET %s", u.table, strings.Join(sets, ", "))
@@ -55,6 +82,22 @@ func (u *UpdateBuilder) SQL() (string, []any) {
 		whereSQL, whereArgs := u.where.SQL(len(args) + 1)
 		sql += " WHERE " + whereSQL
 		args = append(args, whereArgs...)
+	}
+
+	if len(u.orderBy) > 0 {
+		sql += " ORDER BY "
+		parts := make([]string, 0, len(u.orderBy))
+		for _, o := range u.orderBy {
+			clause := strings.Join(o.cols, ", ") + " " + string(o.dir)
+			if o.nulls != "" {
+				clause += " " + string(o.nulls)
+			}
+			parts = append(parts, clause)
+		}
+		sql += strings.Join(parts, ", ")
+	}
+	if u.limitN != nil {
+		sql += fmt.Sprintf(" LIMIT %d", *u.limitN)
 	}
 	if len(u.returning) > 0 {
 		sql += " RETURNING " + strings.Join(u.returning, ", ")

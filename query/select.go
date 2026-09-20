@@ -17,6 +17,13 @@ const (
 	Desc OrderDir = "DESC"
 )
 
+type NullsOrder string
+
+const (
+	NullsFirst NullsOrder = "NULLS FIRST"
+	NullsLast  NullsOrder = "NULLS LAST"
+)
+
 type namedTable interface {
 	TableName() string
 }
@@ -38,8 +45,19 @@ type joinClause struct {
 }
 
 type OrderBy struct {
-	cols []string
-	dir  OrderDir
+	cols  []string
+	dir   OrderDir
+	nulls NullsOrder
+}
+
+type cte struct {
+	name string
+	sub  Subquery
+}
+
+type setOp struct {
+	kind string // "UNION", "UNION ALL", "INTERSECT", "EXCEPT"
+	sub  Subquery
 }
 
 type SelectBuilder[T any] struct {
@@ -53,6 +71,10 @@ type SelectBuilder[T any] struct {
 	orderBy  []OrderBy
 	limitN   *int
 	offsetN  *int
+	ctes     []cte
+	setOps   []setOp
+	lockMode string // "FOR UPDATE" | "FOR SHARE"
+	lockOpt  string // "", "NOWAIT", "SKIP LOCKED"
 }
 
 func Select[T any](cols ...colRef) *SelectBuilder[T] {
@@ -107,12 +129,12 @@ func formatSelectCol(col string) string {
 func (q *SelectBuilder[T]) Distinct() *SelectBuilder[T] { q.distinct = true; return q }
 
 func (q *SelectBuilder[T]) From(table namedTable) *SelectBuilder[T] {
-	q.table = table.TableName()
+	q.table = aliasDDL(table)
 	return q
 }
 
 func (q *SelectBuilder[T]) join(kind JoinKind, table namedTable, on Condition) *SelectBuilder[T] {
-	q.joins = append(q.joins, joinClause{kind: kind, table: table.TableName(), on: on})
+	q.joins = append(q.joins, joinClause{kind: kind, table: aliasDDL(table), on: on})
 	return q
 }
 
@@ -129,7 +151,7 @@ func (q *SelectBuilder[T]) FullJoin(table namedTable, on Condition) *SelectBuild
 	return q.join(FULL, table, on)
 }
 func (q *SelectBuilder[T]) CrossJoin(table namedTable) *SelectBuilder[T] {
-	q.joins = append(q.joins, joinClause{kind: CROSS, table: table.TableName()})
+	q.joins = append(q.joins, joinClause{kind: CROSS, table: aliasDDL(table)})
 	return q
 }
 
@@ -142,13 +164,53 @@ func (q *SelectBuilder[T]) OrderBy(cols []string, dir OrderDir) *SelectBuilder[T
 	return q
 }
 
+// OrderByNulls is OrderBy with an explicit NULLS FIRST / NULLS LAST placement.
+func (q *SelectBuilder[T]) OrderByNulls(cols []string, dir OrderDir, nulls NullsOrder) *SelectBuilder[T] {
+	q.orderBy = append(q.orderBy, OrderBy{dir: dir, cols: cols, nulls: nulls})
+	return q
+}
+
 func (q *SelectBuilder[T]) Limit(n int) *SelectBuilder[T]  { q.limitN = &n; return q }
 func (q *SelectBuilder[T]) Offset(n int) *SelectBuilder[T] { q.offsetN = &n; return q }
 
+// With prepends a common table expression: `WITH name AS (SELECT ...)`.
+func (q *SelectBuilder[T]) With(name string, sub Subquery) *SelectBuilder[T] {
+	q.ctes = append(q.ctes, cte{name: name, sub: sub})
+	return q
+}
+
+// setOp appends a set operation against another query's result.
+func (q *SelectBuilder[T]) setOp(kind string, sub Subquery) *SelectBuilder[T] {
+	q.setOps = append(q.setOps, setOp{kind: kind, sub: sub})
+	return q
+}
+
+func (q *SelectBuilder[T]) Union(sub Subquery) *SelectBuilder[T]        { return q.setOp("UNION", sub) }
+func (q *SelectBuilder[T]) UnionAll(sub Subquery) *SelectBuilder[T]     { return q.setOp("UNION ALL", sub) }
+func (q *SelectBuilder[T]) Intersect(sub Subquery) *SelectBuilder[T]    { return q.setOp("INTERSECT", sub) }
+func (q *SelectBuilder[T]) Except(sub Subquery) *SelectBuilder[T]       { return q.setOp("EXCEPT", sub) }
+
+// ForUpdate adds `FOR UPDATE` (row-level lock).
+func (q *SelectBuilder[T]) ForUpdate() *SelectBuilder[T] { q.lockMode = "FOR UPDATE"; return q }
+
+// ForShare adds `FOR SHARE` (row-level shared lock).
+func (q *SelectBuilder[T]) ForShare() *SelectBuilder[T] { q.lockMode = "FOR SHARE"; return q }
+
+// NoWait makes a locking clause fail immediately if rows are locked.
+func (q *SelectBuilder[T]) NoWait() *SelectBuilder[T] { q.lockOpt = "NOWAIT"; return q }
+
+// SkipLocked skips rows locked by other transactions (SELECT ... FOR UPDATE SKIP LOCKED).
+func (q *SelectBuilder[T]) SkipLocked() *SelectBuilder[T] { q.lockOpt = "SKIP LOCKED"; return q }
+
 func (q *SelectBuilder[T]) SQL() (string, []any) {
+	return q.render(1)
+}
+
+// render builds the SQL with placeholders starting at base. CTE bodies consume
+// the first args, then the main query continues from the next placeholder.
+func (q *SelectBuilder[T]) render(base int) (string, []any) {
 	cols := "*"
 	if len(q.columns) > 0 {
-		cols = strings.Join(q.columns, ", ")
 		formatted := make([]string, len(q.columns))
 		for i, c := range q.columns {
 			formatted[i] = formatSelectCol(c)
@@ -157,6 +219,18 @@ func (q *SelectBuilder[T]) SQL() (string, []any) {
 	}
 
 	var b strings.Builder
+	args := []any{}
+	if len(q.ctes) > 0 {
+		b.WriteString("WITH ")
+		cteParts := make([]string, len(q.ctes))
+		for i, c := range q.ctes {
+			cteParts[i] = fmt.Sprintf("%s AS (%s)", c.name, c.sub.sqlAt(base+len(args)))
+			args = append(args, c.sub.args...)
+		}
+		b.WriteString(strings.Join(cteParts, ", "))
+		b.WriteString(" ")
+	}
+
 	b.WriteString("SELECT ")
 	if q.distinct {
 		b.WriteString("DISTINCT ")
@@ -164,19 +238,18 @@ func (q *SelectBuilder[T]) SQL() (string, []any) {
 	b.WriteString(cols)
 	fmt.Fprintf(&b, " FROM %s", q.table)
 
-	var args []any
 	for _, j := range q.joins {
 		if j.kind == "CROSS" {
 			fmt.Fprintf(&b, " CROSS JOIN %s", j.table)
 			continue
 		}
-		onSQL, onArgs := j.on.SQL(len(args) + 1)
+		onSQL, onArgs := j.on.SQL(len(args) + base)
 		fmt.Fprintf(&b, " %s JOIN %s ON %s", j.kind, j.table, onSQL)
 		args = append(args, onArgs...)
 	}
 
 	if q.where != nil {
-		whereSQL, whereArgs := q.where.SQL(len(args) + 1)
+		whereSQL, whereArgs := q.where.SQL(len(args) + base)
 		b.WriteString(" WHERE ")
 		b.WriteString(whereSQL)
 		args = append(args, whereArgs...)
@@ -188,17 +261,27 @@ func (q *SelectBuilder[T]) SQL() (string, []any) {
 	}
 
 	if q.having != nil {
-		havingSQL, havingArgs := q.having.SQL(len(args) + 1)
+		havingSQL, havingArgs := q.having.SQL(len(args) + base)
 		b.WriteString(" HAVING ")
 		b.WriteString(havingSQL)
 		args = append(args, havingArgs...)
+	}
+
+	for _, op := range q.setOps {
+		opSQL := op.sub.sqlAt(len(args) + base)
+		fmt.Fprintf(&b, " %s (%s)", op.kind, opSQL)
+		args = append(args, op.sub.args...)
 	}
 
 	if len(q.orderBy) > 0 {
 		b.WriteString(" ORDER BY ")
 		parts := make([]string, 0, len(q.orderBy))
 		for _, o := range q.orderBy {
-			parts = append(parts, strings.Join(o.cols, ", ")+" "+string(o.dir))
+			clause := strings.Join(o.cols, ", ") + " " + string(o.dir)
+			if o.nulls != "" {
+				clause += " " + string(o.nulls)
+			}
+			parts = append(parts, clause)
 		}
 		b.WriteString(strings.Join(parts, ", "))
 	}
@@ -207,6 +290,14 @@ func (q *SelectBuilder[T]) SQL() (string, []any) {
 	}
 	if q.offsetN != nil {
 		fmt.Fprintf(&b, " OFFSET %d", *q.offsetN)
+	}
+
+	lockSQL := q.lockMode
+	if lockSQL != "" && q.lockOpt != "" {
+		lockSQL += " " + q.lockOpt
+	}
+	if lockSQL != "" {
+		b.WriteString(" " + lockSQL)
 	}
 
 	return b.String(), args
@@ -238,8 +329,17 @@ func (q *SelectBuilder[T]) First(ctx context.Context, exec db.Executor) (*T, err
 
 func (q *SelectBuilder[T]) Count(ctx context.Context, exec db.Executor) (int64, error) {
 	sqlStr, args := q.SQL()
-	// FIXME: verify it this works in complex queries
 	countSQL := "SELECT COUNT(*) FROM (" + sqlStr + ") AS _count_subquery"
+	var n int64
+	err := exec.QueryRowContext(ctx, countSQL, args...).Scan(&n)
+	return n, err
+}
+
+// CountDistinct counts the distinct values of col across the query result:
+// `SELECT COUNT(DISTINCT col) FROM (<query>)`.
+func (q *SelectBuilder[T]) CountDistinct(ctx context.Context, exec db.Executor, col colRef) (int64, error) {
+	sqlStr, args := q.SQL()
+	countSQL := "SELECT COUNT(DISTINCT " + col.String() + ") FROM (" + sqlStr + ") AS _count_subquery"
 	var n int64
 	err := exec.QueryRowContext(ctx, countSQL, args...).Scan(&n)
 	return n, err

@@ -8,9 +8,13 @@
 - **Snapshot-driven migrations** — edit your schema, then `grain generate`
   diffs it against the last applied snapshot and writes the SQL for you.
 - **Fluent query builder** — `SELECT`/`INSERT`/`UPDATE`/`DELETE` with joins,
-  conditions, grouping and pagination, parameterized everywhere.
-- **Transactions** — one method that begins, commits and rolls back for you.
-- **Reflection-based scanning** — rows map into plain structs via `db:` tags.
+  conditions, grouping and pagination — plus subqueries, CTEs, set operations
+  (`UNION`/`INTERSECT`/`EXCEPT`), row-level locking (`FOR UPDATE ... SKIP
+  LOCKED`), JSON/JSONB operators and table aliases; parameterized everywhere.
+- **Transactions** — one method that begins, commits and rolls back for you,
+  with optional isolation level / read-only control.
+- **Reflection-based scanning** — rows map into plain structs via `db:` tags,
+  including embedded structs, pointer fields and `db:"-"` skips.
 
 ## Contents
 
@@ -67,10 +71,12 @@ Command usage
 
 ```bash
 usage:
-  grain generate -schema <dir> [name]
-  grain migrate up                       (requires DATABASE_URL)
-  grain migrate down                     (requires DATABASE_URL)
-  grain migrate status                   (requires DATABASE_URL)
+  grain generate -schema <dir> [-force] [-yes] [name]
+  grain migrate init                      (requires DATABASE_URL)
+  grain migrate up                        (requires DATABASE_URL)
+  grain migrate down [n]                  (requires DATABASE_URL)
+  grain migrate redo                      (requires DATABASE_URL)
+  grain migrate status                    (requires DATABASE_URL)
 ```
 
 

@@ -16,9 +16,6 @@ var Users = schema.Table("users",
 	schema.Column("status", UserStatus).NotNull().Default("active"),
 )
 
-type ordersColumns struct {
-	ID, UserID, Total *schema.ColumnDef
-}
 
 var Orders = schema.Table("orders",
 	schema.Column("id", schema.Serial()).PrimaryKey(),

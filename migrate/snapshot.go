@@ -17,23 +17,36 @@ type ColumnSnapshot struct {
 	NotNull     bool   `json:"not_null,omitempty"`
 	Unique      bool   `json:"unique,omitempty"`
 	PK          bool   `json:"pk,omitempty"`
+	Identity    bool   `json:"identity,omitempty"`
 	Default     any    `json:"default,omitempty"`
 	DefaultExpr string `json:"default_expr,omitempty"`
+	Generated   string `json:"generated,omitempty"`
+	Check       string `json:"check,omitempty"`
+	Collation   string `json:"collation,omitempty"`
 	RefTable    string `json:"ref_table,omitempty"`
 	RefColumn   string `json:"ref_column,omitempty"`
 	OnDelete    string `json:"on_delete,omitempty"`
 	OnUpdate    string `json:"on_update,omitempty"`
 }
 
-type IndexSnapshort struct {
-	Name string   `json:"name"`
-	Cols []string `json:"cols"`
+type IndexSnapshot struct {
+	Name      string   `json:"name"`
+	Cols      []string `json:"cols"`
+	Unique    bool     `json:"unique,omitempty"`
+	Predicate string   `json:"predicate,omitempty"`
+}
+
+type ConstraintSnapshot struct {
+	Name string `json:"name"`
+	Expr string `json:"expr"`
 }
 
 type TableSnapshot struct {
-	Name    string           `json:"name"`
-	Columns []ColumnSnapshot `json:"columns"`
-	Indexes []IndexSnapshort `json:"indexes"`
+	Name        string               `json:"name"`
+	Columns     []ColumnSnapshot     `json:"columns"`
+	Indexes     []IndexSnapshot      `json:"indexes"`
+	Uniques     []IndexSnapshot      `json:"uniques"`
+	Constraints []ConstraintSnapshot `json:"constraints"`
 }
 
 type EnumSnapshot struct {
@@ -42,12 +55,20 @@ type EnumSnapshot struct {
 }
 
 type Snapshot struct {
-	Tables []TableSnapshot `json:"tables"`
-	Enums  []EnumSnapshot  `json:"enums"`
+	FormatVersion int             `json:"format_version"`
+	Tables        []TableSnapshot `json:"tables"`
+	Enums         []EnumSnapshot  `json:"enums"`
 }
 
-// IMPORTANT: This function would be called from a dynamycally generated module in loader
-// TODO: I will have to endure that changees to runtime Snapshot does not break this one
+// snapshotFormatVersion must be bumped whenever the Snapshot shape changes so
+// the dynamically generated loader and cached journals fail loudly on
+// mismatches instead of silently diffing garbage.
+const snapshotFormatVersion = 2
+
+// BuildSnapshot walks schema.Registry and schema.EnumRegistry to produce the
+// full schema state. It is also called from the dynamically generated loader
+// program in LoadSnapshotFromPackage, so don't change the Snapshot shape
+// without bumping snapshotFormatVersion.
 func BuildSnapshot() Snapshot {
 	var tables []TableSnapshot
 	for _, t := range schema.Registry {
@@ -56,7 +77,9 @@ func BuildSnapshot() Snapshot {
 			cs := ColumnSnapshot{
 				Name: c.Name, Type: c.Type.SQLType,
 				NotNull: c.IsNotNull, Unique: c.IsUnique, PK: c.IsPK,
-				Default: c.DefaultVal, DefaultExpr: c.DefaultExprStr,
+				Identity: c.IsIdentity, Default: c.DefaultVal,
+				DefaultExpr: c.DefaultExprStr, Generated: c.GeneratedExpr,
+				Check: c.CheckExpr, Collation: c.Collation,
 			}
 			if c.RefCol != nil {
 				cs.RefTable = c.RefCol.Table
@@ -66,14 +89,22 @@ func BuildSnapshot() Snapshot {
 			}
 			cols = append(cols, cs)
 		}
-		var idx []IndexSnapshort
+		var idx []IndexSnapshot
 		for _, i := range t.GetIndices() {
-			is := IndexSnapshort{
-				Name: i.Name, Cols: i.Cols,
-			}
-			idx = append(idx, is)
+			idx = append(idx, IndexSnapshot{Name: i.Name, Cols: i.Cols, Unique: i.Unique, Predicate: i.Predicate})
 		}
-		tables = append(tables, TableSnapshot{Name: t.TableName(), Columns: cols, Indexes: idx})
+		var uniques []IndexSnapshot
+		for _, u := range t.GetUnique() {
+			uniques = append(uniques, IndexSnapshot{Name: u.Name, Cols: u.Cols})
+		}
+		var constraints []ConstraintSnapshot
+		for _, c := range t.GetConstraints() {
+			constraints = append(constraints, ConstraintSnapshot{Name: c.Name, Expr: c.Expr})
+		}
+		tables = append(tables, TableSnapshot{
+			Name: t.TableName(), Columns: cols, Indexes: idx,
+			Uniques: uniques, Constraints: constraints,
+		})
 	}
 	sort.Slice(tables, func(i, j int) bool { return tables[i].Name < tables[j].Name })
 
@@ -83,7 +114,7 @@ func BuildSnapshot() Snapshot {
 	}
 	sort.Slice(enums, func(i, j int) bool { return enums[i].Name < enums[j].Name })
 
-	return Snapshot{Tables: tables, Enums: enums}
+	return Snapshot{FormatVersion: snapshotFormatVersion, Tables: tables, Enums: enums}
 }
 
 type journalEntry struct {
@@ -93,6 +124,19 @@ type journalEntry struct {
 
 type journal struct {
 	Entries []journalEntry `json:"entries"`
+}
+
+// snapshotVersion is the format version baked into every generated snapshot
+// file so that journal/snapshot mismatches are loud rather than silent.
+func checkFormatVersion(snap *Snapshot) error {
+	if snap.FormatVersion != 0 && snap.FormatVersion != snapshotFormatVersion {
+		return fmt.Errorf(
+			"snapshot format version %d is not supported (this build understands version %d); "+
+				"regenerate your snapshots or upgrade/downgrade grain",
+			snap.FormatVersion, snapshotFormatVersion,
+		)
+	}
+	return nil
 }
 
 func LoadLatestSnapshot(dir string) (Snapshot, error) {
@@ -123,6 +167,9 @@ func LoadLatestSnapshot(dir string) (Snapshot, error) {
 	var snap Snapshot
 	if err := json.Unmarshal(snapData, &snap); err != nil {
 		return Snapshot{}, fmt.Errorf("parse snapshot %s: %w", last.Version, err)
+	}
+	if err := checkFormatVersion(&snap); err != nil {
+		return Snapshot{}, fmt.Errorf("snapshot %s: %w", last.Version, err)
 	}
 	return snap, nil
 }

@@ -12,8 +12,8 @@ import (
 func ignorePrompt(PromptContext) (Resolution, error) { return Resolution{Action: "ignore"}, nil }
 
 func TestDiffReplacesIndexWhenColumnsChange(t *testing.T) {
-	old := Snapshot{Tables: []TableSnapshot{{Name: "users", Indexes: []IndexSnapshort{{Name: "idx_users_lookup", Cols: []string{"email"}}}}}}
-	new := Snapshot{Tables: []TableSnapshot{{Name: "users", Indexes: []IndexSnapshort{{Name: "idx_users_lookup", Cols: []string{"email", "status"}}}}}}
+	old := Snapshot{Tables: []TableSnapshot{{Name: "users", Indexes: []IndexSnapshot{{Name: "idx_users_lookup", Cols: []string{"email"}}}}}}
+	new := Snapshot{Tables: []TableSnapshot{{Name: "users", Indexes: []IndexSnapshot{{Name: "idx_users_lookup", Cols: []string{"email", "status"}}}}}}
 
 	changes, err := Diff(old, new, ignorePrompt)
 	if err != nil {
@@ -28,8 +28,8 @@ func TestDiffReplacesIndexWhenColumnsChange(t *testing.T) {
 }
 
 func TestDiffUpdatesIndexesAfterTableRename(t *testing.T) {
-	old := Snapshot{Tables: []TableSnapshot{{Name: "old_users", Indexes: []IndexSnapshort{{Name: "idx_old_users_email", Cols: []string{"email"}}}}}}
-	new := Snapshot{Tables: []TableSnapshot{{Name: "users", Indexes: []IndexSnapshort{{Name: "idx_users_email", Cols: []string{"email"}}}}}}
+	old := Snapshot{Tables: []TableSnapshot{{Name: "old_users", Indexes: []IndexSnapshot{{Name: "idx_old_users_email", Cols: []string{"email"}}}}}}
+	new := Snapshot{Tables: []TableSnapshot{{Name: "users", Indexes: []IndexSnapshot{{Name: "idx_users_email", Cols: []string{"email"}}}}}}
 	prompt := func(ctx PromptContext) (Resolution, error) {
 		if ctx.Kind == AmbiguousTable && ctx.OldName == "old_users" {
 			return Resolution{Action: "rename", Target: "users"}, nil
