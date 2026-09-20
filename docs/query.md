@@ -1,10 +1,11 @@
 # Query
 
 `github.com/etornam45/grain/query` is a fluent, type-safe SQL builder. It never talks to PostgreSQL
-directly *and* it never needs to import `github.com/etornam45/grain/schema` — builders work against
-anything with a `TableName() string` method (tables) and anything with a
-`String() string` method (columns), so `schema.ColumnDef` values plug straight
-in.
+directly, and builders work against anything with a `TableName() string` method
+(tables) and anything with a `String() string` method (columns), so
+`schema.ColumnDef` values plug straight in. (The one exception is table
+aliasing, `query.Alias`, which needs a real `*schema.TableDef` to resolve
+column names.)
 
 Every builder has an `SQL() (string, []any)` method that renders the final SQL
 with `$1, $2, ...` placeholders ready for pgx, and one or more execution
@@ -34,8 +35,22 @@ users, err := query.Select[activeUser](
 ```
 
 `Select[T](cols ...colRef)` is generic over the row type `T`. If `cols` is
-empty the rendered SQL selects `*` (choose the columns explicitly for joined
-queries).
+empty, `SELECT` is filled from the struct's `db` tags (the same tags `scan`
+uses), so you don't repeat the column list. Choose the columns explicitly for
+joined queries or when you want expressions in the list.
+
+### Table aliases
+
+`query.Alias(t *schema.TableDef, "u")` returns an aliased view whose `.Col("field")`
+renders as `u.field` and whose `From`/join clause renders `schema AS alias`:
+
+```go
+u := query.Alias(schema.Users, "u")
+rows, err := query.Select[userRow](u.Col("id"), u.Col("name")).
+    From(u).
+    Where(query.Eq(u.Col("status"), "active")).
+    All(ctx, conn)
+```
 
 ### Where clauses
 
@@ -100,6 +115,66 @@ query.Select[User](...).
 query.Select[User](schema.Users.Col("name")).Distinct().From(schema.Users)
 ```
 
+### Ordering with NULLS placement
+
+`OrderByNulls(cols []string, dir OrderDir, nulls NullsOrder)` appends
+`NULLS FIRST` / `NULLS LAST` to the clause:
+
+```go
+query.Select[User](...).
+    From(schema.Users).
+    OrderByNulls([]string{schema.Users.Col("age").String()}, query.Desc, query.NullsLast)
+```
+
+### Common table expressions
+
+`With(name string, sub Subquery)` prepends `WITH name AS (SELECT ...)`. CTE
+arguments are bound before the main query's, so placeholders stay correct:
+
+```go
+active := query.Sub(
+    query.Select[struct{}](schema.Users.Col("id")).
+        From(schema.Users).
+        Where(query.Eq(schema.Users.Col("status"), "active")),
+)
+
+rows, err := query.Select[User](...).
+    With("active", active).
+    From(schema.Users).
+    All(ctx, conn)
+```
+
+### Set operations
+
+`Union`, `UnionAll`, `Intersect` and `Except` combine another `Subquery`'s
+result with this one. The outer builder keeps its `ORDER BY`/`LIMIT`, which
+apply to the whole combined result:
+
+```go
+adults := query.Sub(query.Select[...](...).From(schema.Users).Where(query.Gt(schema.Users.Col("age"), 18)))
+teens  := query.Sub(query.Select[...](...).From(schema.Users).Where(query.Between(schema.Users.Col("age"), 13, 17)))
+
+rows, err := query.Select[...](...).From(schema.Users).
+    Union(adults).
+    UnionAll(teens).
+    OrderBy([]string{schema.Users.Col("name").String()}, query.Asc).
+    All(ctx, conn)
+```
+
+### Row-level locking
+
+`ForUpdate()` / `ForShare()` append the lock, and `NoWait()` / `SkipLocked()`
+pick the contention behavior:
+
+```go
+row, err := query.Select[Job](schema.Jobs.Col("id")).
+    From(schema.Jobs).
+    Where(query.Eq(schema.Jobs.Col("state"), "pending")).
+    ForUpdate().
+    SkipLocked().
+    First(ctx, conn)
+```
+
 ### Executing
 
 | Method | Result                                        |
@@ -107,10 +182,43 @@ query.Select[User](schema.Users.Col("name")).Distinct().From(schema.Users)
 | `All(ctx, exec)` | All rows scanned into `[]T` (zero rows → empty slice) |
 | `First(ctx, exec)` | First row as `*T`; `(nil, nil)` when there are no rows (adds `LIMIT 1`) |
 | `Count(ctx, exec)` | `int64` count of the whole query via `SELECT COUNT(*) FROM (<query>)` |
+| `CountDistinct(ctx, exec, col)` | `SELECT COUNT(DISTINCT col) FROM (<query>)` |
 | `SQL()` | `(string, []any)` — the SQL and its args |
 
-> `Count` wraps the query in a subquery (`SELECT COUNT(*) FROM (...) AS _count_subquery`),
-> so it works with joins, grouping and ordering in place.
+> `Count` and `CountDistinct` wrap the query in a subquery
+> (`SELECT COUNT(*) FROM (...) AS _count_subquery`), so they work with joins,
+> grouping and ordering in place.
+
+### Subqueries
+
+`Sub(selectBuilder)` captures any `SelectBuilder[T]` as a reusable `Subquery`.
+Use it in conditions and CTEs (above). Its placeholders are re-numbered to
+wherever it nests:
+
+```go
+bigOrders := query.Sub(
+    query.Select[struct{}](schema.Orders.Col("user_id")).
+        From(schema.Orders).
+        Where(query.Gt(schema.Orders.Col("total"), 1000)),
+)
+
+query.Select[userRow](...).
+    From(schema.Users).
+    Where(query.And(
+        query.In(schema.Users.Col("id"), bigOrders),
+        query.Exists(
+            query.Sub(query.Select[struct{}](schema.Orders.Col("id")).
+                From(schema.Orders).
+                Where(query.Raw("orders.user_id = users.id"))),
+        ),
+        query.EqAny(schema.Users.Col("id"), bigOrders),
+        query.NeqAll(schema.Users.Col("id"), bigOrders),
+    ))
+```
+
+`Subquery.As(alias)` renders a subquery as a selected column
+(`(SELECT ...) AS total`); only subqueries **without bound arguments** may be
+used this way (argument values can't thread through the select list yet).
 
 ## Conditions
 
@@ -131,10 +239,33 @@ at a given offset, so conditions compose anywhere in a query.
 | `ILike(col, pattern)`| `col ILIKE $n`            |
 | `In(col, vals...)`  | `col IN ($n, $n+1, ...)`   |
 | `NotIn(col, vals...)`| `col NOT IN ($n, ...)`    |
+| `Between(col, low, high)` | `col BETWEEN $n AND $n+1` |
+| `NotBetween(col, low, high)` | `col NOT BETWEEN $n AND $n+1` |
+| `EqAny(col, sub)`   | `col = ANY (SELECT ...)`    |
+| `NeqAll(col, sub)`  | `col <> ALL (SELECT ...)`   |
+| `Exists(sub)`       | `EXISTS (SELECT ...)`       |
 | `Raw(sql, args...)` | Custom SQL expr (`?` bound) |
 
-> `In` and `NotIn` accept either variadic values (`query.In(col, 1, 2, 3)`) or Go slices (`query.In(col, ids)`).
+> `In` and `NotIn` accept either variadic values (`query.In(col, 1, 2, 3)`),
+> Go slices (`query.In(col, ids)`), or a single `Subquery`
+> (`query.In(col, query.Sub(...))` → `col IN (SELECT ...)`).
 > Passing an empty slice safely renders `1 = 0` for `In` and `1 = 1` for `NotIn`.
+
+### JSON / JSONB operators
+
+These bind the operand as a placeholder (`$n`):
+
+| Function            | SQL              |
+| ------------------- | ---------------- |
+| `Contains(col, v)`  | `col @> $n`      |
+| `ContainedBy(col, v)`| `col <@ $n`     |
+| `KeyExists(col, k)` | `col ? $n`       |
+
+```go
+query.Select[...](...).
+    From(schema.Users).
+    Where(query.Contains(schema.Users.Col("profile"), map[string]any{"plan": "pro"}))
+```
 
 ### Null checks
 
@@ -230,8 +361,11 @@ n, err := query.Update(schema.Users).
 
 | Method | Result |
 | ------ | ------ |
-| `Set(vals map[string]any)` | Columns to set (keys sorted alphabetically) |
+| `Set(vals map[string]any)` | Columns to set (keys sorted alphabetically). Values may be **literals** (bound as placeholders), **column references** (`users.age` renders as-is → `SET x = users.age`), or **subqueries** (`query.Sub(...)` renders `SET x = (SELECT ...)`) |
 | `Where(c Condition)` | Filter; omit to update every row |
+| `OrderBy(cols []string, dir OrderDir)` | `ORDER BY` (PostgreSQL `UPDATE ... ORDER BY`) |
+| `OrderByNulls(cols, dir, nulls)` | `OrderBy` with `NULLS FIRST/LAST` |
+| `Limit(n int)` | Cap updated rows (PostgreSQL `UPDATE ... LIMIT n`) |
 | `Returning(cols ...string)` | Appends `RETURNING <cols>` |
 | `Run(ctx, exec)` | Executes; returns `(rowsAffected int64, error)` |
 | `Scan(ctx, exec, dest ...any)` | Executes and scans the single `RETURNING` row into `dest` |
@@ -248,6 +382,9 @@ n, err := query.Delete(schema.Orders).
 | Method | Result |
 | ------ | ------ |
 | `Where(c Condition)` | Filter; omit to delete every row |
+| `OrderBy(cols []string, dir OrderDir)` | `ORDER BY` (PostgreSQL `DELETE ... ORDER BY`) |
+| `OrderByNulls(cols, dir, nulls)` | `OrderBy` with `NULLS FIRST/LAST` |
+| `Limit(n int)` | Cap removed rows (PostgreSQL `DELETE ... LIMIT n`) |
 | `Returning(cols ...string)` | Appends `RETURNING <cols>` |
 | `Run(ctx, exec)` | Executes; returns `(rowsAffected int64, error)` |
 | `Scan(ctx, exec, dest ...any)` | Executes and scans the single `RETURNING` row into `dest` |

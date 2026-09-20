@@ -45,17 +45,29 @@ one of the `schema` constructors:
 | Constructor            | SQL                              |
 | ---------------------- | -------------------------------- |
 | `schema.Serial()`      | `SERIAL`                         |
+| `schema.SmallSerial()` | `SMALLSERIAL`                    |
 | `schema.BigSerial()`   | `BIGSERIAL`                      |
+| `schema.SmallInt()`    | `SMALLINT`                       |
 | `schema.Int()`         | `INTEGER`                        |
 | `schema.BigInt()`      | `BIGINT`                         |
+| `schema.Real()`        | `REAL`                           |
+| `schema.Double()`      | `DOUBLE PRECISION`               |
 | `schema.Bool()`        | `BOOLEAN`                        |
 | `schema.Text()`        | `TEXT`                           |
+| `schema.Bytea()`       | `BYTEA`                          |
 | `schema.UUID()`        | `UUID`                           |
+| `schema.Date()`        | `DATE`                           |
+| `schema.Time()`        | `TIME`                           |
+| `schema.Timetz()`      | `TIMETZ`                         |
+| `schema.Interval()`    | `INTERVAL`                       |
 | `schema.Timestamp()`   | `TIMESTAMP`                      |
 | `schema.TimestampTZ()` | `TIMESTAMPTZ`                    |
 | `schema.JSONB()`       | `JSONB`                          |
+| `schema.Money()`       | `MONEY`                          |
 | `schema.Varchar(n)`    | `VARCHAR(n)`                     |
+| `schema.Char(n)`       | `CHAR(n)`                        |
 | `schema.Numeric(p, s)` | `NUMERIC(p,s)`                   |
+| `schema.Array(inner)`  | `<inner>[]` (one-dimensional array, e.g. `INTEGER[]`) |
 | `schema.Enum(name, values...)` | PostgreSQL enum type `name` |
 
 ### Enums
@@ -86,13 +98,25 @@ schema.Column("email", schema.Varchar(255)).
 | ---------------------------------------- | --------------------------------------------- |
 | `.PrimaryKey()`                          | Marks the column as the primary key           |
 | `.NotNull()`                             | Adds `NOT NULL`                               |
-| `.Unique()`                              | Adds `UNIQUE`                                 |
+| `.Unique()`                              | Adds `UNIQUE` (emitted as a named constraint) |
+| `.Identity()`                            | Adds `GENERATED ALWAYS AS IDENTITY`           |
 | `.Default(v any)`                        | Sets a default **value** (quoted as needed)   |
 | `.DefaultExpr(expr string)`              | Sets a default **expression** (used verbatim) |
+| `.GeneratedAs(expr string)`              | Adds `GENERATED ALWAYS AS (expr) STORED`      |
+| `.Check(expr string)`                    | Adds `CHECK (expr)` (named `<table>_<col>_check`) |
+| `.Collate(collation string)`             | Adds `COLLATE <collation>`                    |
 | `.References(col *ColumnDef)`            | Foreign key → the referenced column           |
 | `.OnDelete(a ReferentialAction)`         | FK `ON DELETE` action (requires `References`) |
 | `.OnUpdate(a ReferentialAction)`         | FK `ON UPDATE` action (requires `References`) |
 | `.Index()`                               | Creates a single-column index named `idx_<table>_<col>` |
+
+```go
+var Orders = schema.Table("orders", ...).
+    ...
+// stored virtual column:
+schema.Column("net", schema.Numeric(12, 2)).
+    GeneratedAs("amount - discount")
+```
 
 ### Defaults
 
@@ -133,10 +157,10 @@ schema.Column("user_id", schema.UUID()).
     OnDelete(schema.Cascade)
 ```
 
-## Indexes
+## Indexes & table-level constraints
 
 The `.Index()` column modifier creates an index `idx_<table>_<column>`. For
-composite indexes, use the table-level `Index`:
+composite indexes, use the table-level methods:
 
 ```go
 var Product = schema.Table("product",
@@ -146,12 +170,34 @@ var Product = schema.Table("product",
     schema.Column("sku", schema.Varchar(15)).NotNull().Unique(),
     schema.Column("barcode", schema.Int()).Index(),
 ).
-    Index("idx_product_name_sku", "name", "sku")
+    Index("idx_product_name_sku", "name", "sku") // composite index
 ```
 
+| Method                                            | Effect                                          |
+| ------------------------------------------------- | ----------------------------------------------- |
+| `Index(name string, cols ...string)`              | `CREATE INDEX name ON tbl (cols...)`            |
+| `IndexUnique(name string, cols ...string)`        | `CREATE UNIQUE INDEX name ON tbl (cols...)`     |
+| `IndexPartial(name string, cols []string, pred)`  | `CREATE INDEX name ON tbl (cols...) WHERE pred` |
+| `Unique(name string, cols ...string)`             | `ALTER TABLE ... ADD CONSTRAINT name UNIQUE (cols...)` (in `CREATE TABLE` for new tables) |
+| `Constraint(name, expr string)`                   | `ALTER TABLE ... ADD CONSTRAINT name CHECK (expr)` |
+
 ```go
-func (t *TableDef) Index(name string, cols ...string) *TableDef
+var Account = schema.Table("account",
+    schema.Column("id", schema.UUID()).PrimaryKey().NotNull(),
+    schema.Column("org_id", schema.UUID()).NotNull(),
+    schema.Column("email", schema.Text()).NotNull(),
+    schema.Column("balance", schema.Numeric(12, 2)).NotNull(),
+).
+    IndexUnique("uniq_account_org_email", "org_id", "email").
+    IndexPartial("idx_account_active", []string{"org_id"}, "status = 'active'").
+    Unique("uniq_account_org", "org_id").
+    Constraint("chk_balance_positive", "balance >= 0")
 ```
+
+The `CREATE TABLE ...` output for new tables embeds `UNIQUE`/`CHECK`
+constraints and `FOREIGN KEY` clauses; on existing tables the migration engine
+emits `ALTER TABLE` statements for each change (see
+[migrations.md](migrations.md)).
 
 ## Inspecting tables
 
@@ -165,7 +211,9 @@ func (t *TableDef) Index(name string, cols ...string) *TableDef
 
 - `Col(name string) *ColumnDef` — lookup by column name, panics if missing.
 - `Columns() []*ColumnDef` — columns in declaration order.
-- `GetIndices() []IndexDef` — declared indexes (`IndexDef{Name, Cols}`).
+- `GetIndices() []IndexDef` — declared indexes (`IndexDef{Name, Cols, Unique, Predicate}`).
+- `GetUnique() []IndexDef` — table-level unique constraints.
+- `GetConstraints() []ConstraintDef` — table-level check constraints.
 - `TableName() string` — the table name.
 
 `*TableDef` implements `namedTable` (a `TableName() string` method), which
