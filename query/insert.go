@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/etornam45/grain/db"
+	"github.com/etornam45/grain/scan"
 )
 
 type conflictClause struct {
@@ -157,4 +158,9 @@ func (i *InsertBuilder) Run(ctx context.Context, exec db.Executor) error {
 func (i *InsertBuilder) Scan(ctx context.Context, exec db.Executor, dest ...any) error {
 	sqlStr, args := i.SQL()
 	return exec.QueryRowContext(ctx, sqlStr, args...).Scan(dest...)
+}
+
+func (i *InsertBuilder) ScanInto[T any](ctx context.Context, exec db.Executor) (T, error) {
+	sqlStr, args := i.SQL()
+	return scan.One[T](exec.QueryRowContext(ctx, sqlStr, args...), i.returning)
 }

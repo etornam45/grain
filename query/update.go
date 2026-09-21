@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/etornam45/grain/db"
+	"github.com/etornam45/grain/scan"
 )
 
 type UpdateBuilder struct {
@@ -123,4 +124,9 @@ func (u *UpdateBuilder) Run(ctx context.Context, exec db.Executor) (int64, error
 func (u *UpdateBuilder) Scan(ctx context.Context, exec db.Executor, dest ...any) error {
 	sqlStr, args := u.SQL()
 	return exec.QueryRowContext(ctx, sqlStr, args...).Scan(dest...)
+}
+
+func (u *UpdateBuilder) ScanInto[T any](ctx context.Context, exec db.Executor) (T, error) {
+	sqlStr, args := u.SQL()
+	return scan.One[T](exec.QueryRowContext(ctx, sqlStr, args...), u.returning)
 }
